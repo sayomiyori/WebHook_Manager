@@ -1,0 +1,74 @@
+[project]
+name = "webhook-manager"
+version = "0.1.0"
+description = "Webhook Manager service"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "sqlalchemy[asyncio]",
+  "asyncpg",
+  "alembic",
+  "celery[redis]",
+  "redis",
+  "pydantic-settings",
+  "structlog",
+  "sentry-sdk[fastapi]",
+  "prometheus-client",
+  "httpx",
+  "python-jose[cryptography]",
+  "passlib[bcrypt]",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
+  "httpx",
+  "ruff",
+  "mypy",
+  "pre-commit",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+warn_unused_ignores = true
+disallow_any_unimported = true
+no_implicit_reexport = true
+namespace_packages = false
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

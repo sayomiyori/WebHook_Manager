@@ -1,0 +1,50 @@
+Metadata-Version: 2.4
+Name: webhook-manager
+Version: 0.1.0
+Summary: Webhook Manager service
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi
+Requires-Dist: uvicorn[standard]
+Requires-Dist: sqlalchemy[asyncio]
+Requires-Dist: asyncpg
+Requires-Dist: alembic
+Requires-Dist: celery[redis]
+Requires-Dist: redis
+Requires-Dist: pydantic-settings
+Requires-Dist: structlog
+Requires-Dist: sentry-sdk[fastapi]
+Requires-Dist: prometheus-client
+Requires-Dist: httpx
+Requires-Dist: python-jose[cryptography]
+Requires-Dist: passlib[bcrypt]
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: httpx; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Requires-Dist: pre-commit; extra == "dev"
+
+# WebHook Manager
+
+Python service scaffold using FastAPI, PostgreSQL (async), Redis, Celery, and Docker.
+
+## Local development
+
+Create a virtualenv and install:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Common commands:
+
+```bash
+make lint
+make type-check
+make test
+make up
+```
+
