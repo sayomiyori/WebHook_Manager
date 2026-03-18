@@ -14,7 +14,7 @@ class ApiKeyModel(Base):
     __tablename__ = "api_keys"
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    key_prefix: Mapped[str] = mapped_column(String(8), index=True)
+    key_prefix: Mapped[str] = mapped_column(String(8), unique=True, index=True)
     key_hash: Mapped[str] = mapped_column(String(255))
     name: Mapped[str] = mapped_column(String(255))
     owner_id: Mapped[UUID] = mapped_column(

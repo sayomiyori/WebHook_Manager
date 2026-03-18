@@ -31,10 +31,8 @@ class PostgresApiKeyRepository(ApiKeyRepository):
         rows = (await self._session.execute(stmt)).scalars().all()
         return [api_key_to_entity(m) for m in rows]
 
-    async def get_by_prefix(self, owner_id: UUID, key_prefix: str) -> ApiKey | None:
-        stmt = select(ApiKeyModel).where(
-            ApiKeyModel.owner_id == owner_id, ApiKeyModel.key_prefix == key_prefix
-        )
+    async def get_by_prefix(self, key_prefix: str) -> ApiKey | None:
+        stmt = select(ApiKeyModel).where(ApiKeyModel.key_prefix == key_prefix)
         model = (await self._session.execute(stmt)).scalars().first()
         return None if model is None else api_key_to_entity(model)
 

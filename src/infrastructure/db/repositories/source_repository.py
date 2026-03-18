@@ -38,6 +38,11 @@ class PostgresSourceRepository(SourceRepository):
         model = (await self._session.execute(stmt)).scalars().first()
         return None if model is None else source_to_entity(model)
 
+    async def get_by_slug_global(self, slug: str) -> Source | None:
+        stmt = select(SourceModel).where(SourceModel.slug == slug)
+        model = (await self._session.execute(stmt)).scalars().first()
+        return None if model is None else source_to_entity(model)
+
     async def create(self, source: Source) -> Source:
         model = source_to_model(source)
         self._session.add(model)

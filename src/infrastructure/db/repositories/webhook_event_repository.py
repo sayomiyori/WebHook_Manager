@@ -11,6 +11,7 @@ from src.infrastructure.db.mappers import (
     webhook_event_to_entity,
     webhook_event_to_model,
 )
+from src.infrastructure.db.models.source import SourceModel
 from src.infrastructure.db.models.webhook_event import WebhookEventModel
 from src.infrastructure.db.repositories._base import clamp_limit
 
@@ -23,6 +24,21 @@ class PostgresWebhookEventRepository(WebhookEventRepository):
         model = await self._session.get(WebhookEventModel, id)
         return None if model is None else webhook_event_to_entity(model)
 
+    async def get_by_owner(
+        self, owner_id: UUID, cursor: UUID | None, limit: int
+    ) -> list[WebhookEvent]:
+        lim = clamp_limit(limit)
+        stmt = (
+            select(WebhookEventModel)
+            .join(SourceModel, WebhookEventModel.source_id == SourceModel.id)
+            .where(SourceModel.owner_id == owner_id)
+        )
+        if cursor is not None:
+            stmt = stmt.where(WebhookEventModel.id > cursor)
+        stmt = stmt.order_by(WebhookEventModel.id.asc()).limit(lim)
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [webhook_event_to_entity(m) for m in rows]
+
     async def get_by_source(
         self, source_id: UUID, cursor: UUID | None, limit: int
     ) -> list[WebhookEvent]:
@@ -33,6 +49,16 @@ class PostgresWebhookEventRepository(WebhookEventRepository):
         stmt = stmt.order_by(WebhookEventModel.id.asc()).limit(lim)
         rows = (await self._session.execute(stmt)).scalars().all()
         return [webhook_event_to_entity(m) for m in rows]
+
+    async def get_by_idempotency_key(
+        self, source_id: UUID, idempotency_key: str
+    ) -> WebhookEvent | None:
+        stmt = select(WebhookEventModel).where(
+            WebhookEventModel.source_id == source_id,
+            WebhookEventModel.idempotency_key == idempotency_key,
+        )
+        model = (await self._session.execute(stmt)).scalars().first()
+        return None if model is None else webhook_event_to_entity(model)
 
     async def create(self, event: WebhookEvent) -> WebhookEvent:
         model = webhook_event_to_model(event)

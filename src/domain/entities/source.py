@@ -11,5 +11,6 @@ class Source(BaseEntity):
     name: str
     slug: str
     owner_id: UUID
+    secret: str | None
     is_active: bool
 

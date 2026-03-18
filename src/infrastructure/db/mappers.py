@@ -74,6 +74,7 @@ def source_to_entity(model: SourceModel) -> Source:
         name=model.name,
         slug=model.slug,
         owner_id=model.owner_id,
+        secret=model.secret,
         is_active=model.is_active,
     )
 
@@ -86,6 +87,7 @@ def source_to_model(entity: Source) -> SourceModel:
         name=entity.name,
         slug=entity.slug,
         owner_id=entity.owner_id,
+        secret=entity.secret,
         is_active=entity.is_active,
     )
 

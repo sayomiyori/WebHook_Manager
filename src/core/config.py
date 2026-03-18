@@ -23,6 +23,9 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
+    CORS_ORIGINS: list[str] = []
+    TRUSTED_HOSTS: list[str] = ["*"]
+
     RATE_LIMIT_INGEST: int = 100
     RATE_LIMIT_READ: int = 1000
     MAX_DELIVERY_ATTEMPTS: int = 5

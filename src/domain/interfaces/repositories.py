@@ -39,7 +39,7 @@ class ApiKeyRepository(ABC):
     ) -> list[ApiKey]: ...
 
     @abstractmethod
-    async def get_by_prefix(self, owner_id: UUID, key_prefix: str) -> ApiKey | None: ...
+    async def get_by_prefix(self, key_prefix: str) -> ApiKey | None: ...
 
     @abstractmethod
     async def create(self, api_key: ApiKey) -> ApiKey: ...
@@ -62,6 +62,9 @@ class SourceRepository(ABC):
 
     @abstractmethod
     async def get_by_slug(self, owner_id: UUID, slug: str) -> Source | None: ...
+
+    @abstractmethod
+    async def get_by_slug_global(self, slug: str) -> Source | None: ...
 
     @abstractmethod
     async def create(self, source: Source) -> Source: ...
@@ -126,9 +129,19 @@ class WebhookEventRepository(ABC):
     async def get_by_id(self, id: UUID) -> WebhookEvent | None: ...
 
     @abstractmethod
+    async def get_by_owner(
+        self, owner_id: UUID, cursor: UUID | None, limit: int
+    ) -> list[WebhookEvent]: ...
+
+    @abstractmethod
     async def get_by_source(
         self, source_id: UUID, cursor: UUID | None, limit: int
     ) -> list[WebhookEvent]: ...
+
+    @abstractmethod
+    async def get_by_idempotency_key(
+        self, source_id: UUID, idempotency_key: str
+    ) -> WebhookEvent | None: ...
 
     @abstractmethod
     async def create(self, event: WebhookEvent) -> WebhookEvent: ...
@@ -157,4 +170,8 @@ class DeliveryAttemptRepository(ABC):
 
     @abstractmethod
     async def delete(self, id: UUID) -> None: ...
+
+
+type EventRepository = WebhookEventRepository
+type DeliveryRepository = DeliveryAttemptRepository
 
