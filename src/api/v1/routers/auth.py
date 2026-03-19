@@ -2,22 +2,59 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from starlette.responses import Response
 
+from src.api.v1.dependencies.auth import get_current_user
 from src.api.v1.schemas.auth import (
     ApiKeyCreateRequest,
     ApiKeyCreateResponse,
     ApiKeyResponse,
+    LoginRequest,
+    LoginResponse,
+    RegisterRequest,
+    RegisterResponse,
 )
-from src.api.v1.schemas.pagination import CursorPage
 from src.core.dependencies import get_auth_service
+from src.domain.entities.user import User
 from src.services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post(
-    "/api-keys",
+    "/register",
+    response_model=RegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def register(
+    body: RegisterRequest,
+    auth: AuthService = Depends(get_auth_service),  # noqa: B008
+) -> RegisterResponse:
+    user = await auth.register_user(body.email, body.password)
+    return RegisterResponse(user_id=user.id)
+
+
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def login(
+    body: LoginRequest,
+    auth: AuthService = Depends(get_auth_service),  # noqa: B008
+) -> LoginResponse:
+    user = await auth.login_user(body.email, body.password)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+    return LoginResponse(user_id=user.id)
+
+
+@router.post(
+    "/keys",
     response_model=ApiKeyCreateResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -25,30 +62,34 @@ async def create_api_key(
     body: ApiKeyCreateRequest,
     auth: AuthService = Depends(get_auth_service),  # noqa: B008
 ) -> ApiKeyCreateResponse:
-    api_key, raw = await auth.generate_key(owner_id=body.owner_id, name=body.name)
-    base = ApiKeyResponse.model_validate(api_key).model_dump()
-    return ApiKeyCreateResponse.model_validate({**base, "raw_key": raw})
-
-
-@router.get("/api-keys", response_model=CursorPage[ApiKeyResponse])
-async def list_api_keys(
-    owner_id: UUID,
-    cursor: UUID | None = None,
-    limit: int = Query(default=50, ge=1, le=100),
-    auth: AuthService = Depends(get_auth_service),  # noqa: B008
-) -> CursorPage[ApiKeyResponse]:
-    keys = await auth.list_keys(owner_id=owner_id, cursor=cursor, limit=limit)
-    next_cursor = keys[-1].id if len(keys) == limit else None
-    return CursorPage[ApiKeyResponse](
-        items=[ApiKeyResponse.model_validate(k) for k in keys],
-        next_cursor=next_cursor,
+    api_key, plaintext = await auth.create_api_key(
+        owner_id=body.owner_id,
+        name=body.name,
+    )
+    return ApiKeyCreateResponse(
+        id=api_key.id,
+        name=api_key.name,
+        key_prefix=api_key.key_prefix,
+        created_at=api_key.created_at,
+        key=plaintext,
     )
 
 
-@router.delete("/api-keys/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_api_key(
-    api_key_id: UUID,
+@router.get("/keys", response_model=list[ApiKeyResponse])
+async def list_api_keys(
+    current_user: User = Depends(get_current_user),  # noqa: B008
     auth: AuthService = Depends(get_auth_service),  # noqa: B008
-) -> None:
-    await auth.revoke_key(api_key_id)
+) -> list[ApiKeyResponse]:
+    keys = await auth.list_api_keys(owner_id=current_user.id)
+    return [ApiKeyResponse.model_validate(k) for k in keys]
+
+
+@router.delete("/keys/{id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_api_key(
+    id: UUID,
+    current_user: User = Depends(get_current_user),  # noqa: B008
+    auth: AuthService = Depends(get_auth_service),  # noqa: B008
+) -> Response:
+    await auth.revoke_api_key(key_id=id, owner_id=current_user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 

@@ -7,8 +7,12 @@ from uuid import uuid4
 from src.domain.entities.source import Source
 from src.domain.entities.user import User
 from src.infrastructure.db.base import async_session_maker
-from src.infrastructure.db.repositories.source_repository import PostgresSourceRepository
-from src.infrastructure.db.repositories.user_repository import PostgresUserRepository
+from src.infrastructure.db.repositories.source_repository import (
+    PostgresSourceRepository,
+)
+from src.infrastructure.db.repositories.user_repository import (
+    PostgresUserRepository,
+)
 
 
 async def main() -> None:

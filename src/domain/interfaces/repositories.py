@@ -42,6 +42,9 @@ class ApiKeyRepository(ABC):
     async def get_by_prefix(self, key_prefix: str) -> ApiKey | None: ...
 
     @abstractmethod
+    async def get_by_hash(self, key_hash: str) -> ApiKey | None: ...
+
+    @abstractmethod
     async def create(self, api_key: ApiKey) -> ApiKey: ...
 
     @abstractmethod

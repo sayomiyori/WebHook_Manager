@@ -36,6 +36,11 @@ class PostgresApiKeyRepository(ApiKeyRepository):
         model = (await self._session.execute(stmt)).scalars().first()
         return None if model is None else api_key_to_entity(model)
 
+    async def get_by_hash(self, key_hash: str) -> ApiKey | None:
+        stmt = select(ApiKeyModel).where(ApiKeyModel.key_hash == key_hash)
+        model = (await self._session.execute(stmt)).scalars().first()
+        return None if model is None else api_key_to_entity(model)
+
     async def create(self, api_key: ApiKey) -> ApiKey:
         model = api_key_to_model(api_key)
         self._session.add(model)

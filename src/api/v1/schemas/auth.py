@@ -6,6 +6,24 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterResponse(BaseModel):
+    user_id: UUID
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    user_id: UUID
+
+
 class ApiKeyCreateRequest(BaseModel):
     owner_id: UUID
     name: str
@@ -15,26 +33,19 @@ class ApiKeyCreateResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    created_at: datetime
-    updated_at: datetime
-    key_prefix: str
     name: str
-    owner_id: UUID
-    last_used_at: datetime | None
-    is_active: bool
-
-    raw_key: str
+    key_prefix: str
+    created_at: datetime
+    key: str
 
 
 class ApiKeyResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    created_at: datetime
-    updated_at: datetime
-    key_prefix: str
     name: str
-    owner_id: UUID
+    key_prefix: str
     last_used_at: datetime | None
     is_active: bool
+    created_at: datetime
 
