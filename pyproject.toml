@@ -19,6 +19,7 @@ dependencies = [
   "httpx",
   "python-jose[cryptography]",
   "passlib[bcrypt]",
+  "psycopg[binary]",
 ]
 
 [project.optional-dependencies]

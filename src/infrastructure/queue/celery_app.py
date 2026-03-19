@@ -4,20 +4,20 @@ from celery import Celery  # type: ignore[import-untyped]
 
 from src.core.config import settings
 
-celery = Celery(
-    "webhook_manager",
+celery_app = Celery(
+    "webhook-manager",
     broker=str(settings.CELERY_BROKER_URL),
-    backend=str(settings.CELERY_BROKER_URL),
-    include=[
-        "src.infrastructure.queue.tasks.deliver_webhook",
-    ],
 )
 
-celery.conf.update(
+celery_app.conf.update(
     task_serializer="json",
     accept_content=["json"],
-    result_serializer="json",
-    timezone="UTC",
-    enable_utc=True,
+    result_backend=None,
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    worker_prefetch_multiplier=1,
 )
+
+# Backwards compatibility for existing imports.
+celery = celery_app
 
