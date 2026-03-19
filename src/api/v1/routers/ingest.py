@@ -19,6 +19,7 @@ from src.core.dependencies import (
     get_event_service,
     get_source_repo,
 )
+from src.core.metrics import webhooks_received_total
 from src.core.security import verify_hmac_signature
 from src.domain.interfaces.repositories import SourceRepository
 from src.infrastructure.queue.dispatcher import dispatch_event_deliveries
@@ -109,6 +110,10 @@ async def ingest_webhook(
         idempotency_key=idempotency_key,
         duplicate=duplicate,
     )
+    webhooks_received_total.labels(
+        source=source.slug,
+        event_type=event.event_type or "unknown",
+    ).inc()
 
     if duplicate:
         response.status_code = status.HTTP_200_OK

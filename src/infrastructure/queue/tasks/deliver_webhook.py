@@ -11,6 +11,7 @@ import structlog
 from celery.exceptions import MaxRetriesExceededError  # type: ignore[import-untyped]
 
 from src.core.config import settings
+from src.core.metrics import deliveries_total, delivery_duration_seconds
 from src.core.security import hmac_sha256_hex
 from src.domain.enums import DeliveryStatus
 from src.infrastructure.db.base import sync_session_maker
@@ -112,6 +113,8 @@ def deliver_webhook(
                 endpoint.failure_count = 0
                 endpoint.updated_at = delivery.updated_at
                 session.commit()
+                deliveries_total.labels(status="success").inc()
+                delivery_duration_seconds.observe(duration_ms / 1000)
                 log.info(
                     "delivery_attempt",
                     delivery_id=delivery_id,
@@ -132,6 +135,8 @@ def deliver_webhook(
             delivery.error_message = str(exc)
             delivery.updated_at = endpoint.updated_at
             session.commit()
+            deliveries_total.labels(status="failed").inc()
+            delivery_duration_seconds.observe(duration_ms / 1000)
             log.info(
                 "delivery_attempt",
                 delivery_id=delivery_id,
@@ -145,6 +150,7 @@ def deliver_webhook(
                 delivery.status = DeliveryStatus.EXHAUSTED
                 delivery.updated_at = datetime.now(UTC)
                 session.commit()
+                deliveries_total.labels(status="exhausted").inc()
                 return {"status": "failed", "response_code": delivery.response_code}
 
             delay = get_backoff_delay(max(delivery.attempt_number - 1, 0))
@@ -154,5 +160,6 @@ def deliver_webhook(
                 delivery.status = DeliveryStatus.EXHAUSTED
                 delivery.updated_at = datetime.now(UTC)
                 session.commit()
+                deliveries_total.labels(status="exhausted").inc()
                 return {"status": "failed", "response_code": delivery.response_code}
 

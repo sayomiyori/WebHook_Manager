@@ -3,9 +3,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import sentry_sdk
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sentry_sdk.integrations.celery import CeleryIntegration
+from sentry_sdk.integrations.fastapi import FastApiIntegration
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from src.api.middleware.correlation_id import CorrelationIdMiddleware
@@ -34,7 +37,13 @@ from src.infrastructure.db.base import engine
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    configure_logging()
+    configure_logging(debug=settings.DEBUG)
+    if settings.SENTRY_DSN:
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            traces_sample_rate=0.05,
+            integrations=[FastApiIntegration(), CeleryIntegration()],
+        )
     async with engine.connect():
         pass
     yield
