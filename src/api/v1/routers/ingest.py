@@ -16,14 +16,12 @@ from fastapi import (
 
 from src.api.v1.dependencies.rate_limit import rate_limit_ingest
 from src.core.dependencies import (
-    get_delivery_service,
     get_event_service,
     get_source_repo,
 )
 from src.core.security import verify_hmac_signature
 from src.domain.interfaces.repositories import SourceRepository
-from src.infrastructure.queue.tasks.deliver_webhook import deliver_webhook
-from src.services.delivery_service import DeliveryService
+from src.infrastructure.queue.dispatcher import dispatch_event_deliveries
 from src.services.event_service import EventService
 
 log = structlog.get_logger()
@@ -36,7 +34,6 @@ MAX_BODY_BYTES = 1_048_576
 async def _dispatch_deliveries(
     *,
     event_service: EventService,
-    delivery_service: DeliveryService,
     event_id_str: str,
 ) -> None:
     # Re-fetch event so this background task is independent from request scope.
@@ -46,12 +43,7 @@ async def _dispatch_deliveries(
     if event is None:
         return
     subs = await event_service.get_matching_subscriptions(event)
-    for sub in subs:
-        attempt = await delivery_service.create_pending_delivery(
-            event.id,
-            sub.endpoint_id,
-        )
-        deliver_webhook.delay(str(attempt.id))
+    await dispatch_event_deliveries(event, subs)
 
 
 @router.post("/ingest/{source_slug}", status_code=status.HTTP_202_ACCEPTED)
@@ -62,7 +54,6 @@ async def ingest_webhook(
     background_tasks: BackgroundTasks,
     source_repo: SourceRepository = Depends(get_source_repo),  # noqa: B008
     event_service: EventService = Depends(get_event_service),  # noqa: B008
-    delivery_service: DeliveryService = Depends(get_delivery_service),  # noqa: B008
     _: None = Depends(rate_limit_ingest),  # noqa: B008
 ) -> dict[str, str]:
     body = await request.body()
@@ -128,7 +119,6 @@ async def ingest_webhook(
     background_tasks.add_task(
         _dispatch_deliveries,
         event_service=event_service,
-        delivery_service=delivery_service,
         event_id_str=str(event.id),
     )
     return {"status": "accepted", "event_id": str(event.id)}
