@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+import redis
 import structlog
 
 from src.core.config import settings
@@ -19,6 +20,7 @@ from src.infrastructure.db.models.endpoint import EndpointModel
 from src.infrastructure.db.models.webhook_event import WebhookEventModel
 from src.infrastructure.queue.backoff import get_backoff_delay
 from src.infrastructure.queue.celery_app import celery_app
+from src.infrastructure.queue.tasks.circuit_breaker import SyncCircuitBreaker
 
 log = structlog.get_logger()
 
@@ -36,6 +38,10 @@ def deliver_webhook(
     delivery_uuid = UUID(delivery_id)
     event_uuid = UUID(event_id)
     endpoint_uuid = UUID(endpoint_id)
+
+    # Celery worker runs in a sync context, so use sync Redis circuit breaker.
+    cb_redis = redis.Redis.from_url(str(settings.REDIS_URL), decode_responses=True)
+    cb = SyncCircuitBreaker(redis=cb_redis)
 
     with sync_session_maker() as session:
         delivery = session.get(DeliveryAttemptModel, delivery_uuid)
@@ -64,7 +70,9 @@ def deliver_webhook(
             return {"status": "failed", "response_code": None}
 
         # Circuit breaker: short-circuit very unhealthy endpoint.
-        if endpoint.failure_count >= 10:
+        if endpoint.failure_count >= 10 or cb.is_open(
+            endpoint_id=endpoint_id, threshold=10
+        ):
             delivery.status = DeliveryStatus.EXHAUSTED
             delivery.error_message = "Circuit breaker open"
             delivery.updated_at = datetime.now(UTC)
@@ -114,6 +122,7 @@ def deliver_webhook(
                 endpoint.failure_count = 0
                 endpoint.updated_at = delivery.updated_at
                 session.commit()
+                cb.reset(endpoint_id=endpoint_id)
                 deliveries_total.labels(status="success").inc()
                 delivery_duration_seconds.observe(duration_ms / 1000)
                 log.info(
@@ -136,17 +145,18 @@ def deliver_webhook(
             delivery.error_message = str(exc)
             delivery.updated_at = endpoint.updated_at
 
+            cb_count = cb.record_failure(endpoint_id=endpoint_id, ttl_seconds=600)
             is_final_attempt = attempt_no >= settings.MAX_DELIVERY_ATTEMPTS
-            if is_final_attempt:
+            should_exhaust = is_final_attempt or cb_count >= 10
+            if should_exhaust:
                 delivery.status = DeliveryStatus.EXHAUSTED
+                deliveries_total.labels(status="exhausted").inc()
             else:
                 delivery.attempt_number = attempt_no + 1
 
             session.commit()
 
-            if is_final_attempt:
-                deliveries_total.labels(status="exhausted").inc()
-            else:
+            if not should_exhaust:
                 deliveries_total.labels(status="failed").inc()
             delivery_duration_seconds.observe(duration_ms / 1000)
 
@@ -159,7 +169,7 @@ def deliver_webhook(
                 duration_ms=duration_ms,
             )
 
-            if is_final_attempt:
+            if should_exhaust:
                 return {"status": "failed", "response_code": delivery.response_code}
 
             delay = get_backoff_delay(max(attempt_no - 1, 0))

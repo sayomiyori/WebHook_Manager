@@ -60,6 +60,7 @@ async def test_auth_endpoints_and_crud_flow(
     r = await client.post(
         "/api/v1/auth/keys",
         json={"owner_id": str(test_user.id), "name": "k2"},
+        headers=auth_headers,
     )
     assert r.status_code == 201
     created_key_id = r.json()["id"]
@@ -143,7 +144,10 @@ async def test_auth_endpoints_and_crud_flow(
     assert r.status_code == 201
     subscription_id = UUID(r.json()["id"])
 
-    r = await client.get(f"/api/v1/subscriptions/{subscription_id}")
+    r = await client.get(
+        f"/api/v1/subscriptions/{subscription_id}",
+        params={"owner_id": str(test_user.id)},
+    )
     assert r.status_code == 200
 
     r = await client.get(
