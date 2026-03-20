@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -U pip
+      - run: pip install -e ".[dev]"
+      - name: Ruff (lint)
+        run: ruff check src/ tests/
+      - name: MyPy (strict)
+        run: mypy src/ --strict
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: webhook_manager
+          POSTGRES_USER: webhook_manager
+          POSTGRES_PASSWORD: webhook_manager
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U webhook_manager"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -U pip
+      - run: pip install -e ".[dev]"
+      - name: Pytest with coverage
+        env:
+          POSTGRES_DB: webhook_manager
+          POSTGRES_USER: webhook_manager
+          POSTGRES_PASSWORD: webhook_manager
+        run: pytest tests/ --cov=src --cov-report=xml --cov-fail-under=80
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: true
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -U pip
+      - run: pip install safety bandit
+      - name: Safety check
+        run: safety check
+      - name: Bandit scan
+        run: bandit -r src/ -ll
+
