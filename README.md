@@ -1,21 +1,97 @@
 # WebHook Manager
 
-Python service scaffold using FastAPI, PostgreSQL (async), Redis, Celery, and Docker.
+A production-oriented webhook platform built with **FastAPI**, **PostgreSQL (async)**, **Redis**, and **Celery** — structured with Clean Architecture (Domain / Services / Infrastructure / API).
+
+## What you get
+
+- **Webhook ingest** with idempotency (`X-Idempotency-Key`) and optional HMAC verification (`X-Webhook-Signature`)
+- **Subscriptions** with glob matching (e.g. `payment.*`)
+- **Delivery engine** with Celery retries + exponential backoff
+- **API key auth** via `X-API-Key` (never stores plaintext keys)
+- **Observability**
+  - Correlation IDs in every request/response (`X-Request-ID`)
+  - Structured JSON logs via `structlog`
+  - Prometheus metrics on `/metrics`
+  - Health checks on `/health`, `/health/live`, `/health/ready`
+- **Production-ready CI/CD**
+  - GitHub Actions pipeline (lint / tests / security)
+  - Docker image builds + VPS auto-deploy
+
+## Architecture (high level)
+
+- `src/domain/`: pure entities + repository interfaces
+- `src/services/`: business logic only
+- `src/infrastructure/`: DB/ORM models, repository implementations, Redis/Celery glue
+- `src/api/`: routers, middleware, request/response schemas
+
+## Prerequisites
+
+- Docker + Docker Compose
+- Python 3.12+ (for local dev/testing)
 
 ## Local development
 
-Create a virtualenv and install:
+### Install Python dependencies
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-Common commands:
+### Run dependencies (Docker)
+
+```bash
+make up
+```
+
+### Common commands
 
 ```bash
 make lint
 make type-check
 make test
-make up
+make migrate
 ```
+
+## Observability
+
+### Health
+
+- `GET /health` → `{"status":"ok"}`
+- `GET /health/live` → always `200`
+- `GET /health/ready` → `200` if **DB + Redis** are reachable, otherwise `503`
+
+### Metrics
+
+- `GET /metrics` → Prometheus text format (intended for internal scraping)
+
+### Logs
+
+- JSON logs in production mode
+- Every log line includes `correlation_id` (bound from `X-Request-ID`)
+
+## Testing
+
+Run the full suite:
+
+```bash
+pytest
+pytest --cov=src --cov-report=term-missing
+```
+
+The test suite is designed to reach **>= 80% coverage**.
+
+## Production
+
+### CI/CD
+
+- CI workflow runs on `push` to `main/develop` and on PRs targeting `main`
+- CD workflow runs on `push` to `main` and deploys only if all CI jobs pass
+
+### Deployment assets
+
+- `docker-compose.prod.yml`: production services (app, celery worker, postgres, redis, nginx with SSL termination)
+- `nginx/conf.d/default.conf`: reverse proxy configuration for SSL termination
+
+**Note:** production secrets must be provided via GitHub Secrets and environment variables on the VPS (the compose file references variables; it does not embed secrets in repo files).
+
 
