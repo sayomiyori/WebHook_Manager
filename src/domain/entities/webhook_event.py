@@ -9,6 +9,8 @@ from src.domain.entities.base import BaseEntity
 
 @dataclass(frozen=False, slots=True)
 class WebhookEvent(BaseEntity):
+    """Webhook event domain entity."""
+
     source_id: UUID
     payload: dict[str, object]
     headers: dict[str, str]

@@ -10,6 +10,8 @@ from src.domain.enums import DeliveryStatus
 
 @dataclass(frozen=False, slots=True)
 class DeliveryAttempt(BaseEntity):
+    """Webhook delivery attempt entity."""
+
     event_id: UUID
     endpoint_id: UUID
     attempt_number: int

@@ -8,6 +8,8 @@ from src.domain.entities.base import BaseEntity
 
 @dataclass(frozen=False, slots=True)
 class Subscription(BaseEntity):
+    """Subscription domain entity."""
+
     endpoint_id: UUID
     source_id: UUID
     owner_id: UUID

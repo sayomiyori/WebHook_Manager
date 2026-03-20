@@ -4,6 +4,8 @@ from enum import StrEnum
 
 
 class DeliveryStatus(StrEnum):
+    """Delivery lifecycle status."""
+
     PENDING = "pending"
     DELIVERING = "delivering"
     SUCCESS = "success"

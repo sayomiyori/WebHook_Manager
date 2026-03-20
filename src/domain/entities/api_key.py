@@ -9,6 +9,8 @@ from src.domain.entities.base import BaseEntity
 
 @dataclass(frozen=False, slots=True)
 class ApiKey(BaseEntity):
+    """API key domain entity."""
+
     key_prefix: str
     key_hash: str
     name: str

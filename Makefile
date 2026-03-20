@@ -5,10 +5,10 @@
 PY := $(shell sh -c 'if command -v python3 >/dev/null 2>&1; then echo python3; elif command -v python >/dev/null 2>&1; then echo python; elif command -v py >/dev/null 2>&1; then echo py; else echo python; fi')
 
 up:
-	docker compose up -d --build
+	docker compose up -d
 
 down:
-	docker compose down -v
+	docker compose down
 
 shell:
 	docker compose exec app bash
@@ -23,14 +23,15 @@ migrate-create:
 	docker compose run --rm app python -m alembic revision --autogenerate -m "$(msg)"
 
 test:
-	pytest
+	pytest tests/ --cov=src --cov-report=xml --cov-fail-under=80
 
 lint:
-	$(PY) -m ruff check .
+	$(PY) -m ruff check src/ tests/
+	$(PY) -m mypy src/ --strict
 
 format:
 	$(PY) -m ruff format .
 
 type-check:
-	$(PY) -m mypy .
+	$(PY) -m mypy src/ --strict
 

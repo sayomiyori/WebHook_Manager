@@ -13,6 +13,8 @@ from src.domain.entities.webhook_event import WebhookEvent
 
 
 class UserRepository(ABC):
+    """Repository interface for users."""
+
     @abstractmethod
     async def get_by_id(self, id: UUID) -> User | None: ...
 
@@ -30,6 +32,8 @@ class UserRepository(ABC):
 
 
 class ApiKeyRepository(ABC):
+    """Repository interface for API keys."""
+
     @abstractmethod
     async def get_by_id(self, id: UUID) -> ApiKey | None: ...
 
@@ -55,6 +59,8 @@ class ApiKeyRepository(ABC):
 
 
 class SourceRepository(ABC):
+    """Repository interface for sources."""
+
     @abstractmethod
     async def get_by_id(self, id: UUID) -> Source | None: ...
 
@@ -80,6 +86,8 @@ class SourceRepository(ABC):
 
 
 class EndpointRepository(ABC):
+    """Repository interface for endpoints."""
+
     @abstractmethod
     async def get_by_id(self, id: UUID) -> Endpoint | None: ...
 
@@ -99,6 +107,8 @@ class EndpointRepository(ABC):
 
 
 class SubscriptionRepository(ABC):
+    """Repository interface for subscriptions."""
+
     @abstractmethod
     async def get_by_id(self, id: UUID) -> Subscription | None: ...
 
@@ -128,6 +138,8 @@ class SubscriptionRepository(ABC):
 
 
 class WebhookEventRepository(ABC):
+    """Repository interface for webhook events."""
+
     @abstractmethod
     async def get_by_id(self, id: UUID) -> WebhookEvent | None: ...
 
@@ -157,6 +169,8 @@ class WebhookEventRepository(ABC):
 
 
 class DeliveryAttemptRepository(ABC):
+    """Repository interface for delivery attempts."""
+
     @abstractmethod
     async def get_by_id(self, id: UUID) -> DeliveryAttempt | None: ...
 

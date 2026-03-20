@@ -8,6 +8,8 @@ from src.domain.entities.base import BaseEntity
 
 @dataclass(frozen=False, slots=True)
 class Source(BaseEntity):
+    """Source domain entity."""
+
     name: str
     slug: str
     owner_id: UUID

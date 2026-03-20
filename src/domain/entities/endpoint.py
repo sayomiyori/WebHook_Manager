@@ -8,6 +8,8 @@ from src.domain.entities.base import BaseEntity
 
 @dataclass(frozen=False, slots=True)
 class Endpoint(BaseEntity):
+    """Endpoint domain entity."""
+
     name: str
     url: str
     owner_id: UUID

@@ -7,6 +7,8 @@ from uuid import UUID
 
 @dataclass(frozen=False, slots=True)
 class BaseEntity:
+    """Base type for all domain entities."""
+
     id: UUID
     created_at: datetime
     updated_at: datetime
