@@ -49,9 +49,12 @@ def _load_env_file_values() -> None:
         k, v = line.split("=", 1)
         values[k.strip()] = v.strip()
 
-    # Rewrite docker-service hosts to localhost for tests running on host.
-    # This prevents asyncpg from trying to resolve `postgres` / `redis`.
-    rewrite_hosts = sys.platform.startswith("win")
+    # Rewrite docker-service hosts to localhost for environments where
+    # service DNS (e.g. `postgres` / `redis`) is not available.
+    # In GitHub Actions we also expose service ports, so `127.0.0.1` works.
+    rewrite_hosts = sys.platform.startswith("win") or (
+        os.getenv("GITHUB_ACTIONS") == "true"
+    )
     for key in ("DATABASE_URL", "REDIS_URL", "CELERY_BROKER_URL"):
         if key in values:
             os.environ[key] = (
