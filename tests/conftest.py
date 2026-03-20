@@ -71,13 +71,27 @@ from src.core.dependencies import get_session  # noqa: E402
 from src.core.security import generate_api_key  # noqa: E402
 from src.domain.entities.api_key import ApiKey  # noqa: E402
 from src.domain.entities.user import User  # noqa: E402
-from src.infrastructure.db.base import async_session_maker  # noqa: E402
+from src.infrastructure.db import models as _models  # noqa: F401, E402
+from src.infrastructure.db.base import Base, async_session_maker, engine  # noqa: E402
 from src.infrastructure.db.repositories.api_key_repository import (  # noqa: E402
     PostgresApiKeyRepository,
 )
 from src.infrastructure.db.repositories.user_repository import (  # noqa: E402
     PostgresUserRepository,
 )
+
+_SCHEMA_READY = False
+
+
+async def _ensure_schema() -> None:
+    """Create all tables for tests (CI may not run migrations)."""
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    _SCHEMA_READY = True
 
 
 async def _truncate_all(session: AsyncSession) -> None:
@@ -95,6 +109,7 @@ async def _truncate_all(session: AsyncSession) -> None:
 @pytest_asyncio.fixture
 async def db_session() -> AsyncSession:
     async with async_session_maker() as session:
+        await _ensure_schema()
         await _truncate_all(session)
         yield session
         await _truncate_all(session)
