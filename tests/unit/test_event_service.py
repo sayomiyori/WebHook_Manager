@@ -191,3 +191,17 @@ async def test_matching_subscriptions_glob() -> None:
     matched_ids = {s.id for s in matched}
     assert matched_ids == {UUID(int=1), UUID(int=2)}
 
+
+@pytest.mark.asyncio
+async def test_no_idempotency_key_creates_new_event_each_time() -> None:
+    events = FakeEventRepo()
+    svc = EventService(events, FakeSubscriptionRepo([]))
+
+    source_id = uuid4()
+    e1, d1 = await svc.ingest_event(source_id, {"x": 1}, {}, None, "a")
+    e2, d2 = await svc.ingest_event(source_id, {"x": 1}, {}, None, "a")
+
+    assert d1 is False
+    assert d2 is False
+    assert e1.id != e2.id
+

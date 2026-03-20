@@ -8,7 +8,6 @@ from uuid import UUID
 
 import httpx
 import structlog
-from celery.exceptions import MaxRetriesExceededError  # type: ignore[import-untyped]
 
 from src.core.config import settings
 from src.core.metrics import deliveries_total, delivery_duration_seconds
@@ -72,6 +71,8 @@ def deliver_webhook(
             session.commit()
             return {"status": "failed", "response_code": None}
 
+        attempt_no = int(delivery.attempt_number or 1)
+        delivery.attempt_number = attempt_no
         delivery.status = DeliveryStatus.DELIVERING
         delivery.attempted_at = datetime.now(UTC)
         delivery.updated_at = delivery.attempted_at
@@ -134,9 +135,21 @@ def deliver_webhook(
             delivery.status = DeliveryStatus.FAILED
             delivery.error_message = str(exc)
             delivery.updated_at = endpoint.updated_at
+
+            is_final_attempt = attempt_no >= settings.MAX_DELIVERY_ATTEMPTS
+            if is_final_attempt:
+                delivery.status = DeliveryStatus.EXHAUSTED
+            else:
+                delivery.attempt_number = attempt_no + 1
+
             session.commit()
-            deliveries_total.labels(status="failed").inc()
+
+            if is_final_attempt:
+                deliveries_total.labels(status="exhausted").inc()
+            else:
+                deliveries_total.labels(status="failed").inc()
             delivery_duration_seconds.observe(duration_ms / 1000)
+
             log.info(
                 "delivery_attempt",
                 delivery_id=delivery_id,
@@ -146,20 +159,9 @@ def deliver_webhook(
                 duration_ms=duration_ms,
             )
 
-            if delivery.attempt_number >= settings.MAX_DELIVERY_ATTEMPTS:
-                delivery.status = DeliveryStatus.EXHAUSTED
-                delivery.updated_at = datetime.now(UTC)
-                session.commit()
-                deliveries_total.labels(status="exhausted").inc()
+            if is_final_attempt:
                 return {"status": "failed", "response_code": delivery.response_code}
 
-            delay = get_backoff_delay(max(delivery.attempt_number - 1, 0))
-            try:
-                raise self.retry(countdown=delay, exc=exc)
-            except MaxRetriesExceededError:
-                delivery.status = DeliveryStatus.EXHAUSTED
-                delivery.updated_at = datetime.now(UTC)
-                session.commit()
-                deliveries_total.labels(status="exhausted").inc()
-                return {"status": "failed", "response_code": delivery.response_code}
+            delay = get_backoff_delay(max(attempt_no - 1, 0))
+            raise self.retry(countdown=delay, exc=exc) from exc
 
