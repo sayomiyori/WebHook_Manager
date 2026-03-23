@@ -63,7 +63,7 @@ make migrate
 
 - `GET /health` → `{"status":"ok"}`
 - `GET /health/live` → always `200`
-- `GET /health/ready` → `200` if **DB + Redis** are reachable, otherwise `503`
+- `GET /health/ready` → `200` with `{"status":"ok","database":"ok","redis":"ok"}` if **DB + Redis** are reachable; otherwise `503` with the same keys and `"unavailable"` for failed checks
 
 ### Metrics
 

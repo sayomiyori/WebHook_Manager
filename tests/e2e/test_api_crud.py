@@ -29,6 +29,11 @@ async def test_auth_endpoints_and_crud_flow(
 
     r = await client.get("/health/ready")
     assert r.status_code == 200
+    assert r.json() == {
+        "status": "ok",
+        "database": "ok",
+        "redis": "ok",
+    }
 
     r = await client.get("/metrics")
     assert r.status_code == 200
@@ -91,6 +96,7 @@ async def test_auth_endpoints_and_crud_flow(
     # Endpoint CRUD
     r = await client.post(
         "/api/v1/endpoints",
+        headers=auth_headers,
         json={
             "owner_id": str(test_user.id),
             "name": "ep",
