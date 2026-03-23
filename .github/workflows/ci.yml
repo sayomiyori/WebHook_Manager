@@ -58,6 +58,11 @@ jobs:
           POSTGRES_DB: webhook_manager
           POSTGRES_USER: webhook_manager
           POSTGRES_PASSWORD: webhook_manager
+          # Required by Settings() at import time (no .env in CI; services on localhost).
+          DATABASE_URL: postgresql+asyncpg://webhook_manager:webhook_manager@127.0.0.1:5432/webhook_manager
+          REDIS_URL: redis://127.0.0.1:6379/0
+          CELERY_BROKER_URL: redis://127.0.0.1:6379/0
+          SECRET_KEY: ci-test-secret-key-minimum-32-characters-required
         run: pytest tests/ --cov=src --cov-report=xml --cov-fail-under=80
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
