@@ -22,6 +22,30 @@ A production-oriented webhook platform built with **FastAPI**, **PostgreSQL (asy
   - GitHub Actions pipeline (lint / tests / security)
   - Docker image builds + VPS auto-deploy
 
+## Screenshots
+
+Examples from a local run (`make up`, app typically on `http://localhost:8001`).
+
+### Docker Compose
+
+![Docker Compose services](docs/images/docker-services.png)
+
+### OpenAPI (Swagger UI)
+
+![Swagger UI](docs/images/swagger-ui-1.png)
+
+![Swagger UI — API overview](docs/images/swagger-ui-2.png)
+
+![Swagger UI — detail](docs/images/swagger-ui-3.png)
+
+### Health checks
+
+![Health ready JSON](docs/images/health-check.png)
+
+### Prometheus metrics (`GET /metrics`)
+
+![Prometheus exposition format on /metrics](docs/images/prometheus-metrics.png)
+
 ## Architecture (high level)
 
 - `src/domain/`: pure entities + repository interfaces
