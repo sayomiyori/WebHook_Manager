@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from src.core.exceptions import ConflictError
 from src.domain.entities.api_key import ApiKey
 from src.domain.entities.user import User
 from src.services.auth_service import AuthService, hash_password, verify_password
@@ -178,7 +179,7 @@ async def test_list_api_keys_paginates_until_final_chunk() -> None:
 
 
 @pytest.mark.asyncio
-async def test_register_user_existing_returns_existing() -> None:
+async def test_register_user_duplicate_email_raises_conflict() -> None:
     api_keys = Mock()
     users = Mock()
     svc = AuthService(api_keys, users)
@@ -193,8 +194,8 @@ async def test_register_user_existing_returns_existing() -> None:
     users.get_by_email = AsyncMock(return_value=existing)
     users.create = AsyncMock()
 
-    out = await svc.register_user(email=existing.email, password="pw")
-    assert out.id == existing.id
+    with pytest.raises(ConflictError):
+        await svc.register_user(email=existing.email, password="pw")
     users.create.assert_not_called()
 
 

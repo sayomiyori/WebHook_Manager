@@ -25,7 +25,6 @@ class LoginResponse(BaseModel):
 
 
 class ApiKeyCreateRequest(BaseModel):
-    owner_id: UUID
     name: str
 
 

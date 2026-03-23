@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 jobs:
-  deploy:
+  build-and-push:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,51 +25,3 @@ jobs:
           docker push "${DOCKER_IMAGE}:${SHA}"
           docker tag "${DOCKER_IMAGE}:${SHA}" "${DOCKER_IMAGE}:latest"
           docker push "${DOCKER_IMAGE}:latest"
-
-      - name: Deploy to VPS (docker compose)
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-          DOCKER_IMAGE: ${{ secrets.DOCKERHUB_IMAGE }}
-          SHA: ${{ github.sha }}
-          DOMAIN: ${{ secrets.VPS_DOMAIN }}
-          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          SECRET_KEY: ${{ secrets.SECRET_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          echo "${VPS_SSH_KEY}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh -o StrictHostKeyChecking=no "${VPS_USER}@${VPS_HOST}" 'bash -s' <<'EOF'
-          set -euo pipefail
-
-          export DOCKER_IMAGE="${DOCKER_IMAGE}"
-          export WEBHOOK_MANAGER_TAG="${SHA}"
-          export POSTGRES_DB="${POSTGRES_DB}"
-          export POSTGRES_USER="${POSTGRES_USER}"
-          export POSTGRES_PASSWORD="${POSTGRES_PASSWORD}"
-          export SECRET_KEY="${SECRET_KEY}"
-
-          APP_CID="$(docker compose -f docker-compose.prod.yml ps -q app || true)"
-          PREV_TAG=""
-          if [ -n "${APP_CID}" ]; then
-            PREV_IMAGE="$(docker inspect --format="{{.Config.Image}}" "${APP_CID}" 2>/dev/null || true)"
-            PREV_TAG="${PREV_IMAGE##*:}"
-          fi
-
-          docker compose -f docker-compose.prod.yml pull app celery_worker || true
-          docker compose -f docker-compose.prod.yml up -d --remove-orphans
-
-          echo "Waiting for health..."
-          if ! timeout 120s bash -c "until curl -fsS \"https://${DOMAIN}/health/ready\"; do sleep 2; done"; then
-            if [ -n "${PREV_TAG}" ]; then
-              echo "Healthcheck failed, rolling back to ${PREV_TAG}"
-              export WEBHOOK_MANAGER_TAG="${PREV_TAG}"
-              docker compose -f docker-compose.prod.yml up -d --remove-orphans
-            fi
-            exit 1
-          fi
-          EOF
-

@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.api.v1.dependencies.auth import get_current_user
 from src.api.v1.dependencies.rate_limit import rate_limit_read
 from src.api.v1.schemas.endpoints import (
     EndpointCreateRequest,
@@ -13,6 +14,7 @@ from src.api.v1.schemas.endpoints import (
 from src.api.v1.schemas.pagination import CursorPage
 from src.core.dependencies import get_endpoint_service
 from src.core.exceptions import ForbiddenError, NotFoundError
+from src.domain.entities.user import User
 from src.services.endpoint_service import EndpointService
 
 router = APIRouter(prefix="/endpoints", tags=["endpoints"])
@@ -21,10 +23,11 @@ router = APIRouter(prefix="/endpoints", tags=["endpoints"])
 @router.post("", response_model=EndpointResponse, status_code=status.HTTP_201_CREATED)
 async def create_endpoint(
     body: EndpointCreateRequest,
+    current_user: User = Depends(get_current_user),  # noqa: B008
     service: EndpointService = Depends(get_endpoint_service),  # noqa: B008
 ) -> EndpointResponse:
     endpoint = await service.create_endpoint(
-        owner_id=body.owner_id, name=body.name, url=body.url, secret=body.secret
+        owner_id=current_user.id, name=body.name, url=body.url, secret=body.secret
     )
     return EndpointResponse.model_validate(endpoint)
 

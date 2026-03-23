@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 import bcrypt
 
+from src.core.exceptions import ConflictError
 from src.core.security import generate_api_key, hash_api_key
 from src.domain.entities.api_key import ApiKey
 from src.domain.entities.user import User
@@ -92,8 +93,7 @@ class AuthService:
     async def register_user(self, email: str, password: str) -> User:
         existing = await self._users.get_by_email(email)
         if existing is not None:
-            # Keep it simple for demo purposes.
-            return existing
+            raise ConflictError("Email already registered")
         now = datetime.now(UTC)
         user = User(
             id=uuid4(),

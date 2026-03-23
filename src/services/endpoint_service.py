@@ -41,7 +41,7 @@ class EndpointService:
         self, owner_id: UUID, cursor: UUID | None, limit: int
     ) -> tuple[list[Endpoint], UUID | None]:
         items = await self._repo.get_by_owner(owner_id, cursor, limit)
-        next_cursor = items[-1].id if len(items) == min(max(limit, 1), 100) else None
+        next_cursor = items[-1].id if len(items) == limit else None
         return items, next_cursor
 
     async def update_endpoint(

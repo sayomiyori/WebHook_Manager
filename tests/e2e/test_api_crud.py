@@ -64,7 +64,7 @@ async def test_auth_endpoints_and_crud_flow(
     # Auth: keys create/list/delete (protected)
     r = await client.post(
         "/api/v1/auth/keys",
-        json={"owner_id": str(test_user.id), "name": "k2"},
+        json={"name": "k2"},
         headers=auth_headers,
     )
     assert r.status_code == 201
@@ -98,7 +98,6 @@ async def test_auth_endpoints_and_crud_flow(
         "/api/v1/endpoints",
         headers=auth_headers,
         json={
-            "owner_id": str(test_user.id),
             "name": "ep",
             "url": "https://receiver.test/ep",
             "secret": "s1",

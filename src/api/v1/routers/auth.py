@@ -60,10 +60,11 @@ async def login(
 )
 async def create_api_key(
     body: ApiKeyCreateRequest,
+    current_user: User = Depends(get_current_user),  # noqa: B008
     auth: AuthService = Depends(get_auth_service),  # noqa: B008
 ) -> ApiKeyCreateResponse:
     api_key, plaintext = await auth.create_api_key(
-        owner_id=body.owner_id,
+        owner_id=current_user.id,
         name=body.name,
     )
     return ApiKeyCreateResponse(

@@ -7,7 +7,6 @@ from pydantic import BaseModel, ConfigDict
 
 
 class EndpointCreateRequest(BaseModel):
-    owner_id: UUID
     name: str
     url: str
     secret: str | None = None
