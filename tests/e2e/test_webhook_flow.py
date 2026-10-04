@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import Mock
 from uuid import UUID, uuid4
 
 import pytest
-import respx
-from httpx import Response
 
 from src.domain.entities.endpoint import Endpoint
 from src.domain.entities.source import Source
 from src.domain.entities.subscription import Subscription
 from src.domain.entities.user import User
 from src.domain.enums import DeliveryStatus
+from src.infrastructure.db.repositories.api_key_repository import (
+    PostgresApiKeyRepository,
+)
 from src.infrastructure.db.repositories.delivery_attempt_repository import (
     PostgresDeliveryAttemptRepository,
 )
@@ -25,13 +27,14 @@ from src.infrastructure.db.repositories.subscription_repository import (
     PostgresSubscriptionRepository,
 )
 from src.infrastructure.db.repositories.user_repository import PostgresUserRepository
-from src.infrastructure.queue.celery_app import celery_app
+from src.infrastructure.queue.tasks.deliver_webhook import deliver_webhook
+from src.services.auth_service import AuthService
 
 
 @pytest.mark.asyncio
-async def test_full_delivery_flow(client, db_session) -> None:
-    celery_app.conf.task_always_eager = True
-    celery_app.conf.task_eager_propagates = False
+async def test_full_delivery_flow(client, db_session, monkeypatch) -> None:
+    queued = Mock(return_value=Mock(id="queued-test-task"))
+    monkeypatch.setattr(deliver_webhook, "delay", queued)
     now = datetime.now(UTC)
 
     user = await PostgresUserRepository(db_session).create(
@@ -82,15 +85,11 @@ async def test_full_delivery_flow(client, db_session) -> None:
         )
     )
 
-    with respx.mock(assert_all_called=False) as respx_mock:
-        respx_mock.post("https://receiver.test/hook").mock(
-            return_value=Response(200, json={"ok": True})
-        )
-        resp = await client.post(
-            "/webhooks/ingest/test-source",
-            headers={"X-Event-Type": "payment.created"},
-            json={"hello": "world"},
-        )
+    resp = await client.post(
+        "/webhooks/ingest/test-source",
+        headers={"X-Event-Type": "payment.created"},
+        json={"hello": "world"},
+    )
     assert resp.status_code == 202
     event_id = UUID(resp.json()["event_id"])
 
@@ -100,7 +99,12 @@ async def test_full_delivery_flow(client, db_session) -> None:
         limit=100,
     )
     assert attempts
-    assert attempts[0].status == DeliveryStatus.SUCCESS
+    assert attempts[0].status == DeliveryStatus.PENDING
+    queued.assert_called_once_with(str(attempts[0].id), str(event_id), str(endpoint.id))
+    _, key = await AuthService(
+        PostgresApiKeyRepository(db_session), PostgresUserRepository(db_session)
+    ).create_api_key(user.id, "test")
+    client.headers.update({"X-API-Key": key})
 
     # Deliveries API (covers deliveries router and ownership checks)
     resp = await client.get(
@@ -123,9 +127,11 @@ async def test_full_delivery_flow(client, db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_retry_flow(client, db_session) -> None:
-    celery_app.conf.task_always_eager = True
-    celery_app.conf.task_eager_propagates = False
+async def test_dispatch_persists_pending_delivery(
+    client, db_session, monkeypatch
+) -> None:
+    queued = Mock(return_value=Mock(id="queued-test-task"))
+    monkeypatch.setattr(deliver_webhook, "delay", queued)
     now = datetime.now(UTC)
 
     user = await PostgresUserRepository(db_session).create(
@@ -177,15 +183,11 @@ async def test_retry_flow(client, db_session) -> None:
         )
     )
 
-    with respx.mock(assert_all_called=False) as respx_mock:
-        respx_mock.post("https://receiver.retry/hook").mock(
-            return_value=Response(500, json={"error": "boom"})
-        )
-        resp = await client.post(
-            "/webhooks/ingest/retry-source",
-            headers={"X-Event-Type": "order.created"},
-            json={"hello": "world"},
-        )
+    resp = await client.post(
+        "/webhooks/ingest/retry-source",
+        headers={"X-Event-Type": "order.created"},
+        json={"hello": "world"},
+    )
     assert resp.status_code == 202
     event_id = UUID(resp.json()["event_id"])
 
@@ -195,11 +197,16 @@ async def test_retry_flow(client, db_session) -> None:
         limit=100,
     )
     assert attempts
-    assert attempts[-1].status == DeliveryStatus.EXHAUSTED
+    assert attempts[-1].status == DeliveryStatus.PENDING
+    queued.assert_called_once()
+    _, key = await AuthService(
+        PostgresApiKeyRepository(db_session), PostgresUserRepository(db_session)
+    ).create_api_key(user.id, "test")
+    client.headers.update({"X-API-Key": key})
 
     refreshed = await endpoint_repo.get_by_id(endpoint.id)
     assert refreshed is not None
-    assert refreshed.failure_count >= 5
+    assert refreshed.failure_count == 0
 
     resp = await client.get(
         "/api/v1/deliveries",
@@ -210,4 +217,3 @@ async def test_retry_flow(client, db_session) -> None:
         },
     )
     assert resp.status_code == 200
-

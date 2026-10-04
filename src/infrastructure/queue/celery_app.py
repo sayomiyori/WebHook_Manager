@@ -7,6 +7,7 @@ from src.core.config import settings
 celery_app = Celery(
     "webhook-manager",
     broker=str(settings.CELERY_BROKER_URL),
+    include=["src.infrastructure.queue.tasks.deliver_webhook"],
 )
 
 celery_app.conf.update(

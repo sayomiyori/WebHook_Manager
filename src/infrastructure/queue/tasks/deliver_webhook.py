@@ -12,7 +12,7 @@ import structlog
 
 from src.core.config import settings
 from src.core.metrics import deliveries_total, delivery_duration_seconds
-from src.core.security import hmac_sha256_hex
+from src.core.security import hmac_sha256_hex, sanitize_webhook_headers
 from src.domain.enums import DeliveryStatus
 from src.infrastructure.db.base import sync_session_maker
 from src.infrastructure.db.models.delivery_attempt import DeliveryAttemptModel
@@ -92,7 +92,7 @@ def deliver_webhook(
             ensure_ascii=False,
         )
         payload_bytes = payload_text.encode("utf-8")
-        headers: dict[str, str] = dict(event.headers)
+        headers = sanitize_webhook_headers(event.headers)
         headers.setdefault("Content-Type", "application/json")
         headers["X-Webhook-ID"] = str(event.id)
         if endpoint.secret:
@@ -174,4 +174,3 @@ def deliver_webhook(
 
             delay = get_backoff_delay(max(attempt_no - 1, 0))
             raise self.retry(countdown=delay, exc=exc) from exc
-

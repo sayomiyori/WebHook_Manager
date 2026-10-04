@@ -1,70 +1,38 @@
 from __future__ import annotations
 
 import os
-import sys
 from datetime import UTC, datetime
-from pathlib import Path
 from uuid import uuid4
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-def _replace_host_in_dsn(dsn: str, new_host: str) -> str:
-    # Simple DSN host rewrite:
-    # - postgresql+asyncpg://user:pass@postgres:5432/db -> ...@127.0.0.1:5432/db
-    # - redis://redis:6379/0 -> redis://127.0.0.1:6379/0
-    if "://" not in dsn:
-        return dsn
-    scheme, rest = dsn.split("://", 1)
-    if "@" not in rest:
-        # redis://host:port/db case without userinfo
-        host_port, path = rest.split("/", 1) if "/" in rest else (rest, "")
-        host, port = host_port.split(":", 1)
-        new = f"{scheme}://{new_host}:{port}"
-        return new + (f"/{path}" if path else "")
-    userinfo, host_port_and_path = rest.split("@", 1)
-    # host_port_and_path = host:port/... (for both postgres and redis)
-    if "/" in host_port_and_path:
-        host_port, path = host_port_and_path.split("/", 1)
-    else:
-        host_port, path = host_port_and_path, ""
-    host, port = host_port.split(":", 1)
-    new = f"{scheme}://{userinfo}@{new_host}:{port}"
-    return new + (f"/{path}" if path else "")
+def _configure_test_environment() -> None:
+    """Refuse implicit application databases, including values from .env."""
+    from sqlalchemy.engine import make_url
 
-
-def _load_env_file_values() -> None:
-    env_path = Path(__file__).resolve().parents[1] / ".env"
-    if not env_path.exists():
-        return
-    text_env = env_path.read_text(encoding="utf-8", errors="ignore")
-    values: dict[str, str] = {}
-    for line in text_env.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        values[k.strip()] = v.strip()
-
-    # Rewrite docker-service hosts to localhost for environments where
-    # service DNS (e.g. `postgres` / `redis`) is not available.
-    # In GitHub Actions we also expose service ports, so `127.0.0.1` works.
-    rewrite_hosts = sys.platform.startswith("win") or (
-        os.getenv("GITHUB_ACTIONS") == "true"
+    database_url = os.environ.get("TEST_DATABASE_URL")
+    if not database_url or not (make_url(database_url).database or "").endswith(
+        "_test"
+    ):
+        raise RuntimeError(
+            "TEST_DATABASE_URL must explicitly name a database ending _test"
+        )
+    redis_url = os.environ.get("TEST_REDIS_URL")
+    if not redis_url:
+        raise RuntimeError("TEST_REDIS_URL must explicitly select isolated test Redis")
+    os.environ["DATABASE_URL"] = database_url
+    os.environ["REDIS_URL"] = redis_url
+    os.environ["CELERY_BROKER_URL"] = redis_url
+    os.environ.setdefault(
+        "SECRET_KEY", "local-test-only-key-with-at-least-32-characters"
     )
-    for key in ("DATABASE_URL", "REDIS_URL", "CELERY_BROKER_URL"):
-        if key in values:
-            os.environ[key] = (
-                _replace_host_in_dsn(values[key], "127.0.0.1")
-                if rewrite_hosts
-                else values[key]
-            )
 
 
-_load_env_file_values()
+_configure_test_environment()
 
 from src.api.main import app  # noqa: E402
 from src.core.dependencies import get_session  # noqa: E402
@@ -72,7 +40,7 @@ from src.core.security import generate_api_key  # noqa: E402
 from src.domain.entities.api_key import ApiKey  # noqa: E402
 from src.domain.entities.user import User  # noqa: E402
 from src.infrastructure.db import models as _models  # noqa: F401, E402
-from src.infrastructure.db.base import Base, async_session_maker, engine  # noqa: E402
+from src.infrastructure.db.base import engine  # noqa: E402
 from src.infrastructure.db.repositories.api_key_repository import (  # noqa: E402
     PostgresApiKeyRepository,
 )
@@ -80,39 +48,41 @@ from src.infrastructure.db.repositories.user_repository import (  # noqa: E402
     PostgresUserRepository,
 )
 
-_SCHEMA_READY = False
-
-
-async def _ensure_schema() -> None:
-    """Create all tables for tests (CI may not run migrations)."""
-    global _SCHEMA_READY
-    if _SCHEMA_READY:
-        return
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    _SCHEMA_READY = True
-
-
-async def _truncate_all(session: AsyncSession) -> None:
-    await session.execute(
-        text(
-            "TRUNCATE TABLE "
-            "delivery_attempts, webhook_events, subscriptions, endpoints, "
-            "sources, api_keys, users "
-            "RESTART IDENTITY CASCADE"
-        )
-    )
-    await session.commit()
-
 
 @pytest_asyncio.fixture
-async def db_session() -> AsyncSession:
-    async with async_session_maker() as session:
-        await _ensure_schema()
-        await _truncate_all(session)
-        yield session
-        await _truncate_all(session)
+async def db_session(monkeypatch) -> AsyncSession:
+    # Migrations must be applied before pytest; tests may commit savepoints only.
+    async with engine.connect() as connection:
+        transaction = await connection.begin()
+        async with AsyncSession(
+            bind=connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        ) as session:
+            from contextlib import asynccontextmanager
+
+            from src.infrastructure.queue import dispatcher
+
+            @asynccontextmanager
+            async def shared_session():
+                yield session
+
+            monkeypatch.setattr(dispatcher, "async_session_maker", shared_session)
+            try:
+                yield session
+            finally:
+                await transaction.rollback()
+
+
+@pytest.fixture(autouse=True)
+def restore_celery_configuration():
+    from src.infrastructure.queue.celery_app import celery_app
+
+    eager = celery_app.conf.task_always_eager
+    propagates = celery_app.conf.task_eager_propagates
+    yield
+    celery_app.conf.task_always_eager = eager
+    celery_app.conf.task_eager_propagates = propagates
 
 
 @pytest_asyncio.fixture
@@ -169,4 +139,3 @@ async def api_key(db_session: AsyncSession, test_user: User) -> tuple[ApiKey, st
 async def auth_headers(api_key: tuple[ApiKey, str]) -> dict[str, str]:
     _, plaintext = api_key
     return {"X-API-Key": plaintext}
-

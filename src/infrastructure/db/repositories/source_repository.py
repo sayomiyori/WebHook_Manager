@@ -39,9 +39,10 @@ class PostgresSourceRepository(SourceRepository):
         return None if model is None else source_to_entity(model)
 
     async def get_by_slug_global(self, slug: str) -> Source | None:
-        stmt = select(SourceModel).where(SourceModel.slug == slug)
-        model = (await self._session.execute(stmt)).scalars().first()
-        return None if model is None else source_to_entity(model)
+        stmt = select(SourceModel).where(SourceModel.slug == slug).limit(2)
+        models = (await self._session.execute(stmt)).scalars().all()
+        # Slugs are owner-scoped; the public route must fail closed on ambiguity.
+        return source_to_entity(models[0]) if len(models) == 1 else None
 
     async def create(self, source: Source) -> Source:
         model = source_to_model(source)
@@ -60,4 +61,3 @@ class PostgresSourceRepository(SourceRepository):
     async def delete(self, id: UUID) -> None:
         await self._session.execute(delete(SourceModel).where(SourceModel.id == id))
         await self._session.commit()
-

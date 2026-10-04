@@ -19,6 +19,7 @@ async def test_auth_endpoints_and_crud_flow(
     test_user: User,
     auth_headers: dict[str, str],
 ) -> None:
+    client.headers.update(auth_headers)
     # Health + metrics
     r = await client.get("/health")
     assert r.status_code == 200
@@ -206,4 +207,3 @@ async def test_auth_endpoints_and_crud_flow(
         params={"owner_id": str(test_user.id)},
     )
     assert r.status_code == 404
-

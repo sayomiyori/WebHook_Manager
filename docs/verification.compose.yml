@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: webhook_manager_test
+      POSTGRES_USER: verification
+      POSTGRES_PASSWORD: local-verification-only
+    ports:
+      - '127.0.0.1:55433:5432'
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '127.0.0.1:56380:6379'
+  app:
+    image: webhook-verification:local
+    build:
+      context: ..
+    environment: &environment
+      DATABASE_URL: postgresql+asyncpg://verification:local-verification-only@host.docker.internal:55433/webhook_manager_test
+      REDIS_URL: redis://host.docker.internal:56380/0
+      CELERY_BROKER_URL: redis://host.docker.internal:56380/0
+      MAX_DELIVERY_ATTEMPTS: 1
+      SECRET_KEY: local-verification-only-key-at-least-32-characters
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - '127.0.0.1:38081:8000'
+  worker:
+    image: webhook-verification:local
+    environment: *environment
+    command: celery -A src.infrastructure.queue.celery_app worker --loglevel=warning --concurrency=1
+

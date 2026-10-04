@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import BackgroundTasks, Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
 
@@ -39,3 +41,11 @@ async def get_current_user(
         )
     return user
 
+
+async def get_current_owner(
+    owner_id: UUID,
+    current_user: User = Depends(get_current_user),  # noqa: B008
+) -> UUID:
+    if owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return current_user.id

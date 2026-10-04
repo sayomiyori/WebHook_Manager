@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.api.v1.dependencies.auth import get_current_owner, get_current_user
 from src.api.v1.dependencies.rate_limit import rate_limit_read
 from src.api.v1.schemas.pagination import CursorPage
 from src.api.v1.schemas.subscriptions import (
@@ -11,7 +12,13 @@ from src.api.v1.schemas.subscriptions import (
     SubscriptionResponse,
     SubscriptionUpdateRequest,
 )
-from src.core.dependencies import get_subscription_service
+from src.core.dependencies import (
+    get_endpoint_repo,
+    get_source_repo,
+    get_subscription_service,
+)
+from src.domain.entities.user import User
+from src.domain.interfaces.repositories import EndpointRepository, SourceRepository
 from src.services.subscription_service import SubscriptionService
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
@@ -24,8 +31,21 @@ router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 )
 async def create_subscription(
     body: SubscriptionCreateRequest,
+    endpoints: EndpointRepository = Depends(get_endpoint_repo),  # noqa: B008
+    sources: SourceRepository = Depends(get_source_repo),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
     service: SubscriptionService = Depends(get_subscription_service),  # noqa: B008
 ) -> SubscriptionResponse:
+    endpoint = await endpoints.get_by_id(body.endpoint_id)
+    source = await sources.get_by_id(body.source_id)
+    if endpoint is None or source is None:
+        raise HTTPException(status_code=404, detail="Endpoint or source not found")
+    if (
+        body.owner_id != current_user.id
+        or endpoint.owner_id != current_user.id
+        or source.owner_id != current_user.id
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
     subscription = await service.create(
         owner_id=body.owner_id,
         endpoint_id=body.endpoint_id,
@@ -39,20 +59,24 @@ async def create_subscription(
 @router.get("/{subscription_id}", response_model=SubscriptionResponse)
 async def get_subscription(
     subscription_id: UUID,
+    current_user: User = Depends(get_current_user),  # noqa: B008
     service: SubscriptionService = Depends(get_subscription_service),  # noqa: B008
     _: None = Depends(rate_limit_read),  # noqa: B008
 ) -> SubscriptionResponse:
     subscription = await service.get(subscription_id)
     if subscription is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    if subscription.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
     return SubscriptionResponse.model_validate(subscription)
 
 
 @router.get("", response_model=CursorPage[SubscriptionResponse])
 async def list_subscriptions(
-    owner_id: UUID,
+    owner_id: UUID = Depends(get_current_owner),  # noqa: B008
     cursor: UUID | None = None,
     limit: int = Query(default=50, ge=1, le=100),
+    current_user: User = Depends(get_current_user),  # noqa: B008
     service: SubscriptionService = Depends(get_subscription_service),  # noqa: B008
     _: None = Depends(rate_limit_read),  # noqa: B008
 ) -> CursorPage[SubscriptionResponse]:
@@ -68,12 +92,15 @@ async def list_subscriptions(
 async def update_subscription(
     subscription_id: UUID,
     body: SubscriptionUpdateRequest,
+    current_user: User = Depends(get_current_user),  # noqa: B008
     service: SubscriptionService = Depends(get_subscription_service),  # noqa: B008
 ) -> SubscriptionResponse:
     current = await service.get(subscription_id)
     if current is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
+    if current.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
     updated = current
     if body.event_type_filter is not None:
         updated.event_type_filter = list(body.event_type_filter)
@@ -87,7 +114,12 @@ async def update_subscription(
 @router.delete("/{subscription_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_subscription(
     subscription_id: UUID,
+    current_user: User = Depends(get_current_user),  # noqa: B008
     service: SubscriptionService = Depends(get_subscription_service),  # noqa: B008
 ) -> None:
+    current = await service.get(subscription_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    if current.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
     await service.delete(subscription_id)
-

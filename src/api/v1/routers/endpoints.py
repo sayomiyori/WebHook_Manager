@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from src.api.v1.dependencies.auth import get_current_user
+from src.api.v1.dependencies.auth import get_current_owner, get_current_user
 from src.api.v1.dependencies.rate_limit import rate_limit_read
 from src.api.v1.schemas.endpoints import (
     EndpointCreateRequest,
@@ -35,7 +35,7 @@ async def create_endpoint(
 @router.get("/{endpoint_id}", response_model=EndpointResponse)
 async def get_endpoint(
     endpoint_id: UUID,
-    owner_id: UUID,
+    owner_id: UUID = Depends(get_current_owner),  # noqa: B008
     service: EndpointService = Depends(get_endpoint_service),  # noqa: B008
     _: None = Depends(rate_limit_read),  # noqa: B008
 ) -> EndpointResponse:
@@ -54,7 +54,7 @@ async def get_endpoint(
 
 @router.get("", response_model=CursorPage[EndpointResponse])
 async def list_endpoints(
-    owner_id: UUID,
+    owner_id: UUID = Depends(get_current_owner),  # noqa: B008
     cursor: UUID | None = None,
     limit: int = Query(default=50, ge=1, le=100),
     service: EndpointService = Depends(get_endpoint_service),  # noqa: B008
@@ -70,8 +70,8 @@ async def list_endpoints(
 @router.put("/{endpoint_id}", response_model=EndpointResponse)
 async def update_endpoint(
     endpoint_id: UUID,
-    owner_id: UUID,
     body: EndpointUpdateRequest,
+    owner_id: UUID = Depends(get_current_owner),  # noqa: B008
     service: EndpointService = Depends(get_endpoint_service),  # noqa: B008
 ) -> EndpointResponse:
     fields: dict[str, object] = {}
@@ -91,8 +91,7 @@ async def update_endpoint(
 @router.delete("/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_endpoint(
     endpoint_id: UUID,
-    owner_id: UUID,
+    owner_id: UUID = Depends(get_current_owner),  # noqa: B008
     service: EndpointService = Depends(get_endpoint_service),  # noqa: B008
 ) -> None:
     await service.delete_endpoint(endpoint_id, owner_id)
-

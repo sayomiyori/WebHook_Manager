@@ -20,7 +20,7 @@ from src.core.dependencies import (
     get_source_repo,
 )
 from src.core.metrics import webhooks_received_total
-from src.core.security import verify_hmac_signature
+from src.core.security import sanitize_webhook_headers, verify_hmac_signature
 from src.domain.interfaces.repositories import SourceRepository
 from src.infrastructure.queue.dispatcher import dispatch_event_deliveries
 from src.services.event_service import EventService
@@ -93,7 +93,7 @@ async def ingest_webhook(
             detail="Payload must be object",
         )
 
-    headers = {k: v for k, v in request.headers.items()}
+    headers = sanitize_webhook_headers(dict(request.headers))
 
     event, duplicate = await event_service.ingest_event(
         source.id,
@@ -127,4 +127,3 @@ async def ingest_webhook(
         event_id_str=str(event.id),
     )
     return {"status": "accepted", "event_id": str(event.id)}
-
