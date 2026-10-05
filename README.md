@@ -100,12 +100,32 @@ make migrate
 
 ## Testing
 
-### Platform client foundation
+### Tenant bot registration
 
 AuthFortress authorization/status and Telegram `getMe` clients are implemented
-under `src/infrastructure/platform`. Bot persistence, management routes, service
-context, registration admission and webhook provisioning are subsequent work.
+under `src/infrastructure/platform`. Platform routes persist tenant-scoped bots
+with encrypted credentials and fresh online authorization through AuthFortress.
 Existing standalone API-key authentication remains independent.
+
+After applying `alembic upgrade head`, enabled installations expose:
+
+| Route | Authorization | Behavior |
+| --- | --- | --- |
+| `POST /api/v1/tenants/{tenant_id}/bots` | Bearer; tenant owner | Verify `{name, token}` with Telegram, reauthorize, encrypt and register |
+| `GET /api/v1/tenants/{tenant_id}/bots` | Bearer; tenant member | UUID cursor pagination, limit 1..100 |
+| `GET /api/v1/tenants/{tenant_id}/bots/{bot_id}` | Bearer; tenant member | Tenant-scoped read, including inactive bots |
+| `POST /api/v1/tenants/{tenant_id}/bots/{bot_id}/deactivate` | Bearer; tenant owner | Idempotent deactivation |
+| `GET /internal/v1/bots/{bot_id}/context` | Independent `X-Service-Key` | Active bot and tenant check, no credentials |
+
+Telegram identities remain globally reserved after deactivation. Duplicate
+registrations return 409; cross-tenant bot access is hidden with 404. Credentials
+are bound to both bot and tenant UUIDs inside Fernet ciphertext. Reads and service
+context exclude the token, ciphertext and issuer identity. Inactive context is
+403; missing bot is 404; issuer/Redis/provider failures deny access.
+
+Registration does not configure Telegram: every BotView returns
+`webhook_status: not_configured`. Webhook provisioning, update admission/outbox,
+AI consumption and outgoing answers are subsequent implementation stages.
 
 `PLATFORM_BOTS_ENABLED` defaults to false. Opt-in validates
 `AUTHFORTRESS_BASE_URL`, `BOT_CREDENTIALS_KEY`,
@@ -113,8 +133,10 @@ Existing standalone API-key authentication remains independent.
 Use distinct random ASCII service keys of at least 32 bytes and an independently
 generated Fernet key; retain the latter separately from database backups.
 HTTP issuer URLs are restricted to local loopback or Compose `auth_service`;
-other deployments require HTTPS. `RATE_LIMIT_BOT_REGISTER` defaults to 10;
-admission enforcement belongs to the subsequent registry implementation.
+other deployments require HTTPS. `RATE_LIMIT_BOT_REGISTER` defaults to 10
+admissions per user/tenant in a trailing 60-second window. A single Redis Lua
+operation uses server time and unique admission IDs; denied requests do not call
+Telegram or extend expiry. Admitted provider failures count against quota.
 
 Clients verify TLS, ignore environment proxies, refuse redirects and perform no
 retries. Timeouts are 2 seconds for connect, 5 for read/write/pool and a 10-second
