@@ -100,6 +100,31 @@ make migrate
 
 ## Testing
 
+### Platform client foundation
+
+AuthFortress authorization/status and Telegram `getMe` clients are implemented
+under `src/infrastructure/platform`. Bot persistence, management routes, service
+context, registration admission and webhook provisioning are subsequent work.
+Existing standalone API-key authentication remains independent.
+
+`PLATFORM_BOTS_ENABLED` defaults to false. Opt-in validates
+`AUTHFORTRESS_BASE_URL`, `BOT_CREDENTIALS_KEY`,
+`AUTHFORTRESS_WEBHOOK_SERVICE_KEY` and `WEBHOOK_AGENT_CONTEXT_KEY` at startup.
+Use distinct random ASCII service keys of at least 32 bytes and an independently
+generated Fernet key; retain the latter separately from database backups.
+HTTP issuer URLs are restricted to local loopback or Compose `auth_service`;
+other deployments require HTTPS. `RATE_LIMIT_BOT_REGISTER` defaults to 10;
+admission enforcement belongs to the subsequent registry implementation.
+
+Clients verify TLS, ignore environment proxies, refuse redirects and perform no
+retries. Timeouts are 2 seconds for connect, 5 for read/write/pool and a 10-second
+total deadline. Replies are limited to 64 KiB; compressed replies fail closed.
+Provider data and errors never become public error messages. Platform HTTP logs
+are suppressed because Telegram URLs carry tokens. With platform mode enabled,
+Sentry excludes local variables and request bodies/headers/cookies/query data,
+drops HTTP breadcrumbs and Telegram events/transactions. This intentionally
+reduces diagnostic detail to protect credentials.
+
 Run the full suite:
 
 ```bash

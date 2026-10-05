@@ -30,7 +30,12 @@ from src.core.exceptions import (
     NotFoundError,
     RateLimitError,
 )
-from src.core.logging import configure_logging
+from src.core.logging import (
+    configure_logging,
+    platform_sentry_breadcrumb,
+    platform_sentry_event,
+    suppress_platform_http_logging,
+)
 from src.infrastructure.cache.redis_client import get_redis
 from src.infrastructure.db.base import engine
 
@@ -38,11 +43,23 @@ from src.infrastructure.db.base import engine
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     configure_logging(debug=settings.DEBUG)
+    if settings.PLATFORM_BOTS_ENABLED:
+        suppress_platform_http_logging()
     if settings.SENTRY_DSN:
         sentry_sdk.init(
             dsn=settings.SENTRY_DSN,
             traces_sample_rate=0.05,
             integrations=[FastApiIntegration(), CeleryIntegration()],
+            before_send=platform_sentry_event
+            if settings.PLATFORM_BOTS_ENABLED
+            else None,
+            before_send_transaction=(
+                platform_sentry_event if settings.PLATFORM_BOTS_ENABLED else None
+            ),
+            include_local_variables=not settings.PLATFORM_BOTS_ENABLED,
+            before_breadcrumb=(
+                platform_sentry_breadcrumb if settings.PLATFORM_BOTS_ENABLED else None
+            ),
         )
     async with engine.connect():
         pass
@@ -87,6 +104,7 @@ async def handle_conflict(_: Request, __: ConflictError) -> JSONResponse:
 async def handle_rate_limit(_: Request, __: RateLimitError) -> JSONResponse:
     return JSONResponse(status_code=429, content={"error": "rate_limited"})
 
+
 app.include_router(health_router)
 app.include_router(metrics_router)
 
@@ -101,4 +119,3 @@ app.include_router(v1)
 webhooks = APIRouter(prefix="/webhooks")
 webhooks.include_router(ingest_router)
 app.include_router(webhooks)
-
