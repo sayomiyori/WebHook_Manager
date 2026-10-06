@@ -53,3 +53,27 @@ Detection: regression creates the same slug under two owners and verifies 404.
 Non-ASCII supplied signature reached `hmac.compare_digest` as a string and raised
 TypeError. Validate exact lowercase hexadecimal SHA256 length first. Regression:
 five malformed values reject without exceptions; full suite 67 passed.
+
+## 2026-10-06 — Telegram chat type and inactive tenant classification
+
+Malformed chat.type arrays/objects raised TypeError during set membership and
+returned 500. Validate the type before membership; HTTP regressions require a
+sanitized 422. Canonical inactive tenant status was treated as issuer outage503,
+causing publication retry instead of cancellation. Distinguish inactive403 from
+invalid/unavailable issuer responses; real database worker tests assert cancelled
+without AgentHub calls.
+
+## 2026-10-06 — Interrupted webhook setup status
+
+Expired configuring claims remained configuring indefinitely. Read-time SQL
+projection now reports unknown using PostgreSQL clock_timestamp, preserving the
+stored claim for fenced retry. HTTP regression seeds an expired claim and checks
+the bot view; schema and the applied migration remain unchanged.
+
+## 2026-10-06 — Retry reported a different webhook URL
+
+After an operator origin change, retry correctly reused the persisted URL but
+returned the new computed origin in its response. Both dry-run and apply now
+report the prepared URL, consistent with v1's no-URL-replacement contract.
+Regression changes the origin after an ambiguous setup and checks the dry-run,
+provider request and success response against the original stored URL.

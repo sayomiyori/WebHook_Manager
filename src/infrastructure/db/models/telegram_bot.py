@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import (
@@ -16,9 +17,14 @@ from sqlalchemy import (
     true,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.infrastructure.db.base import Base
+
+if TYPE_CHECKING:
+    from src.infrastructure.db.models.telegram_bot_webhook import (
+        TelegramBotWebhookModel,
+    )
 
 
 class TelegramBotModel(Base):
@@ -40,6 +46,11 @@ class TelegramBotModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    webhook: Mapped[TelegramBotWebhookModel | None] = relationship(lazy="selectin")
+
+    @property
+    def webhook_status(self) -> str:
+        return self.webhook.effective_state if self.webhook else "not_configured"
 
     __table_args__ = (
         UniqueConstraint("telegram_bot_id", name="uq_telegram_bots_telegram_bot_id"),

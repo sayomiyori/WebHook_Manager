@@ -7,7 +7,10 @@ from src.core.config import settings
 celery_app = Celery(
     "webhook-manager",
     broker=str(settings.CELERY_BROKER_URL),
-    include=["src.infrastructure.queue.tasks.deliver_webhook"],
+    include=[
+        "src.infrastructure.queue.tasks.deliver_webhook",
+        "src.infrastructure.queue.tasks.publish_platform_ingress",
+    ],
 )
 
 celery_app.conf.update(
@@ -21,4 +24,3 @@ celery_app.conf.update(
 
 # Backwards compatibility for existing imports.
 celery = celery_app
-

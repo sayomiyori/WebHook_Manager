@@ -123,9 +123,9 @@ are bound to both bot and tenant UUIDs inside Fernet ciphertext. Reads and servi
 context exclude the token, ciphertext and issuer identity. Inactive context is
 403; missing bot is 404; issuer/Redis/provider failures deny access.
 
-Registration does not configure Telegram: every BotView returns
-`webhook_status: not_configured`. Webhook provisioning, update admission/outbox,
-AI consumption and outgoing answers are subsequent implementation stages.
+Registration starts with `webhook_status: not_configured`. Optional Telegram
+provisioning and durable intake are described below. AI consumption and outgoing
+answers remain subsequent implementation stages.
 
 `PLATFORM_BOTS_ENABLED` defaults to false. Opt-in validates
 `AUTHFORTRESS_BASE_URL`, `BOT_CREDENTIALS_KEY`,
@@ -147,7 +147,71 @@ Sentry excludes local variables and request bodies/headers/cookies/query data,
 drops HTTP breadcrumbs and Telegram events/transactions. This intentionally
 reduces diagnostic detail to protect credentials.
 
-Run the full suite:
+## Telegram provisioning and durable intake
+
+`PLATFORM_TELEGRAM_ENABLED=false` keeps the intake routes disabled. Enabling it
+requires valid platform registration settings, `TELEGRAM_WEBHOOK_ORIGIN` (a fixed
+public HTTPS origin), `AGENTHUB_BASE_URL`, and a distinct
+`WEBHOOK_AGENT_INGRESS_KEY`. Service keys must be independent; never reuse the
+Fernet key or Telegram token.
+
+An authenticated tenant owner calls
+`POST /api/v1/tenants/{tenant_id}/bots/{bot_id}/webhook` with
+`{"dry_run":true}` to inspect the URL without writing state or contacting Telegram.
+After reviewing it, `{"dry_run":false}` installs the prepared secret using
+`setWebhook`, `allowed_updates=["message"]`, `drop_pending_updates=false` and
+`max_connections=10`. Confirmed success is `configured`; definite provider failure
+is `failed`; ambiguous failure or an expired interrupted attempt is `unknown`.
+An active attempt is `configuring`. Retry reuses the stored secret and URL;
+concurrent attempts return 409. `getWebhookInfo` cannot prove secret installation.
+
+Telegram posts to `/webhooks/telegram/{bot_id}` with exactly one
+`X-Telegram-Bot-Api-Secret-Token`. Authentication precedes bounded JSON streaming
+(1 MiB). Private nonempty text is accepted with 202; supported non-text updates
+are ignored with 200. Replay of the same canonical update returns 200 and the
+original event; changed content for the same bot/update ID returns 409. Ingress
+and its publication intent commit together in PostgreSQL, independently of Redis.
+
+Run the existing Celery worker and a separate recovery process:
+
+```bash
+python -m scripts.recover_platform_outbox
+# A single bounded scan:
+python -m scripts.recover_platform_outbox --once
+```
+
+Worker/scanner require only database/broker settings, `AUTHFORTRESS_BASE_URL`,
+`AUTHFORTRESS_WEBHOOK_SERVICE_KEY`, `AGENTHUB_BASE_URL`, and
+`WEBHOOK_AGENT_INGRESS_KEY`. Leave both API feature flags false and omit the
+credential encryption key. Recovery scans every five seconds, submits UUIDs in
+batches of at most 100, and preserves intent on broker failure. Atomic 60-second
+leases fence stale workers; database time governs retry. Publication signs the
+immutable envelope and validates a matching receipt. Inactive context cancels;
+definite admission rejection fails; transient errors retry with bounded backoff.
+`PLATFORM_PUBLICATION_MAX_ATTEMPTS` defaults to 10 (range 1–100). A final expired
+claim fails as `admission_outcome_unconfirmed`. Published means a matching job
+receipt was persisted; it does not mean AI execution or Telegram reply completed.
+
+NexusCore exposes the optional `telegram-ingress` Compose profile for recovery.
+Its AgentHub consumer is still pending: do not enable live publication until that
+consumer's contract is implemented and verified.
+
+Controlled acceptance (no live bot/LLM calls) requires dedicated PostgreSQL/Redis,
+explicit local `TEST_DATABASE_URL` and `TEST_AUTH_DATABASE_URL` ending `_test`,
+the sibling AuthFortress virtualenv, Docker, and a built image:
+
+```bash
+docker build -t webhook-verification:local .
+python -m scripts.verify_telegram_ingress --image webhook-verification:local
+```
+
+The harness creates fresh test databases and uniquely named containers. It stops
+only its own containers and retains the databases/containers for inspection.
+It exercises real JWT/owner authorization, controlled setup, broker outage,
+recovery, durable remote admission with a lost receipt, and replay without a
+second remote job.
+
+## Automated tests
 
 ```bash
 pytest

@@ -9,6 +9,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     SecretStr,
+    StrictBool,
     StringConstraints,
     field_validator,
 )
@@ -43,7 +44,23 @@ class BotView(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
-    webhook_status: Literal["not_configured"] = "not_configured"
+    webhook_status: Literal[
+        "not_configured", "configuring", "configured", "failed", "unknown"
+    ] = "not_configured"
+
+
+class WebhookProvisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    dry_run: StrictBool
+
+
+class WebhookProvisionView(BaseModel):
+    bot_id: UUID
+    tenant_id: UUID
+    webhook_url: str
+    operation: Literal["setWebhook"] = "setWebhook"
+    dry_run: bool = False
+    webhook_status: str | None = None
 
 
 class BotContext(BaseModel):

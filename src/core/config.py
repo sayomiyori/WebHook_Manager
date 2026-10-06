@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ipaddress
+import re
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlsplit
@@ -39,6 +41,79 @@ class Settings(BaseSettings):
     AUTHFORTRESS_WEBHOOK_SERVICE_KEY: SecretStr | None = None
     WEBHOOK_AGENT_CONTEXT_KEY: SecretStr | None = None
     RATE_LIMIT_BOT_REGISTER: int = 10
+    PLATFORM_TELEGRAM_ENABLED: bool = False
+    TELEGRAM_WEBHOOK_ORIGIN: str | None = None
+    AGENTHUB_BASE_URL: str | None = None
+    WEBHOOK_AGENT_INGRESS_KEY: SecretStr | None = None
+    PLATFORM_PUBLICATION_MAX_ATTEMPTS: int = 10
+
+    @field_validator("AGENTHUB_BASE_URL")
+    @classmethod
+    def _validate_agent_url(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        checked = value
+        if (
+            value.startswith("http://agent_service")
+            and urlsplit(value).hostname == "agent_service"
+        ):
+            checked = "http://auth_service" + value[len("http://agent_service") :]
+        cls._validate_issuer_url(checked)
+        return value.rstrip("/")
+
+    @field_validator("TELEGRAM_WEBHOOK_ORIGIN")
+    @classmethod
+    def _validate_webhook_origin(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        try:
+            parsed = urlsplit(value)
+            host = parsed.hostname or ""
+            valid = (
+                parsed.scheme == "https"
+                and parsed.port in {None, 443, 80, 88, 8443}
+                and parsed.username is None
+                and parsed.password is None
+                and parsed.path in {"", "/"}
+                and not parsed.query
+                and not parsed.fragment
+                and "?" not in value
+                and "#" not in value
+                and all(33 <= ord(c) <= 126 for c in value)
+                and re.fullmatch(
+                    r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}", host
+                )
+                is not None
+                and not host.endswith((".localhost", ".local", ".internal"))
+            )
+            try:
+                ipaddress.ip_address(host)
+                valid = False
+            except ValueError:
+                pass
+        except ValueError:
+            valid = False
+        if not valid:
+            raise ValueError("Invalid public Telegram webhook origin")
+        return value.rstrip("/")
+
+    @field_validator("PLATFORM_PUBLICATION_MAX_ATTEMPTS")
+    @classmethod
+    def _validate_publication_attempts(cls, value: int) -> int:
+        if not 1 <= value <= 100:
+            raise ValueError("Publication attempts must be between 1 and 100")
+        return value
+
+    def require_publication(self) -> None:
+        if not all(
+            (
+                self.AUTHFORTRESS_BASE_URL,
+                self.AUTHFORTRESS_WEBHOOK_SERVICE_KEY,
+                self.AGENTHUB_BASE_URL,
+                self.WEBHOOK_AGENT_INGRESS_KEY,
+            )
+        ):
+            raise ValueError("Platform publication configuration is incomplete")
 
     @field_validator("AUTHFORTRESS_BASE_URL")
     @classmethod
@@ -72,7 +147,11 @@ class Settings(BaseSettings):
             raise ValueError("Invalid AuthFortress base URL")
         return value.rstrip("/")
 
-    @field_validator("AUTHFORTRESS_WEBHOOK_SERVICE_KEY", "WEBHOOK_AGENT_CONTEXT_KEY")
+    @field_validator(
+        "AUTHFORTRESS_WEBHOOK_SERVICE_KEY",
+        "WEBHOOK_AGENT_CONTEXT_KEY",
+        "WEBHOOK_AGENT_INGRESS_KEY",
+    )
     @classmethod
     def _validate_service_key(cls, value: SecretStr | None) -> SecretStr | None:
         if value is None or not value.get_secret_value():
@@ -108,6 +187,7 @@ class Settings(BaseSettings):
                 self.AUTHFORTRESS_WEBHOOK_SERVICE_KEY,
                 self.WEBHOOK_AGENT_CONTEXT_KEY,
                 self.BOT_CREDENTIALS_KEY,
+                self.WEBHOOK_AGENT_INGRESS_KEY,
             )
             if key is not None
         ]
@@ -122,6 +202,10 @@ class Settings(BaseSettings):
             )
         ):
             raise ValueError("Platform bot configuration is incomplete")
+        if self.PLATFORM_TELEGRAM_ENABLED:
+            if not self.PLATFORM_BOTS_ENABLED or not self.TELEGRAM_WEBHOOK_ORIGIN:
+                raise ValueError("Platform Telegram configuration is incomplete")
+            self.require_publication()
         return self
 
     @field_validator("SECRET_KEY")

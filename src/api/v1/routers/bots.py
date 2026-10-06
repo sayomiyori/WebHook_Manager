@@ -14,14 +14,22 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.api.v1.dependencies.platform import (
     get_bearer,
     get_bot_service,
+    get_webhook_service,
     require_manage,
     require_platform,
     require_read,
     require_service_key,
 )
-from src.api.v1.schemas.bots import BotContext, BotCreate, BotView
+from src.api.v1.schemas.bots import (
+    BotContext,
+    BotCreate,
+    BotView,
+    WebhookProvisionRequest,
+    WebhookProvisionView,
+)
 from src.api.v1.schemas.pagination import CursorPage
 from src.services.bot_service import BotService
+from src.services.telegram_webhook_service import TelegramWebhookService
 
 
 class BotRoute(APIRoute):
@@ -64,6 +72,17 @@ internal_router = APIRouter(
     route_class=BotRoute,
     dependencies=[Depends(require_service_key)],
 )
+
+
+@router.post("/{bot_id}/webhook", response_model=WebhookProvisionView)
+async def provision_webhook(
+    tenant_id: UUID,
+    bot_id: UUID,
+    body: WebhookProvisionRequest,
+    bearer: SecretStr = Depends(get_bearer),  # noqa: B008
+    service: TelegramWebhookService = Depends(get_webhook_service),  # noqa: B008
+) -> WebhookProvisionView:  # noqa: B008
+    return await service.provision(tenant_id, bot_id, bearer, body.dry_run)
 
 
 @router.post("", response_model=BotView, status_code=201)

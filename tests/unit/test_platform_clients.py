@@ -252,7 +252,6 @@ def test_service_keys_cannot_be_reused():
     [
         {"tenant_id": str(uuid4()), "is_active": True},
         {"tenant_id": str(TENANT), "is_active": 1},
-        {"tenant_id": str(TENANT), "is_active": False},
         {"tenant_id": str(TENANT)},
     ],
 )
@@ -264,6 +263,21 @@ async def test_service_status_requires_canonical_active_tenant(body):
     )
     with pytest.raises(PlatformError, match="Service unavailable"):
         await client.tenant_active(TENANT)
+
+
+async def test_inactive_canonical_tenant_is_forbidden():
+    client = AuthFortressClient(
+        "http://auth_service:8000",
+        SecretStr(KEY),
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200, json={"tenant_id": str(TENANT), "is_active": False}
+            )
+        ),
+    )
+    with pytest.raises(PlatformError) as error:
+        await client.tenant_active(TENANT)
+    assert error.value.status_code == 403
 
 
 @pytest.mark.parametrize(

@@ -15,10 +15,18 @@ from src.infrastructure.cache.redis_client import get_redis
 from src.infrastructure.db.repositories.telegram_bot_repository import (
     TelegramBotRepository,
 )
+from src.infrastructure.db.repositories.telegram_ingress_repository import (
+    TelegramIngressRepository,
+)
+from src.infrastructure.db.repositories.telegram_webhook_repository import (
+    TelegramWebhookRepository,
+)
 from src.infrastructure.platform.clients import AuthFortressClient, TelegramClient
 from src.infrastructure.platform.credentials import BotCredentials
 from src.infrastructure.platform.errors import PlatformError
 from src.services.bot_service import BotService
+from src.services.telegram_ingress_service import TelegramIngressService
+from src.services.telegram_webhook_service import TelegramWebhookService
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -29,6 +37,12 @@ def get_platform_settings() -> Settings:
 
 def require_platform(config: Settings = Depends(get_platform_settings)) -> Settings:  # noqa: B008
     if not config.PLATFORM_BOTS_ENABLED:
+        raise PlatformError()
+    return config
+
+
+def require_telegram(config: Settings = Depends(require_platform)) -> Settings:  # noqa: B008
+    if not config.PLATFORM_TELEGRAM_ENABLED:
         raise PlatformError()
     return config
 
@@ -108,4 +122,28 @@ def get_bot_service(
         telegram,
         BotCredentials(config.BOT_CREDENTIALS_KEY),
         limiter,
+    )
+
+
+def get_webhook_service(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+    issuer: AuthFortressClient = Depends(get_issuer),  # noqa: B008
+    telegram: TelegramClient = Depends(get_telegram),  # noqa: B008
+    config: Settings = Depends(require_telegram),  # noqa: B008
+) -> TelegramWebhookService:  # noqa: B008
+    return TelegramWebhookService(
+        TelegramBotRepository(session),
+        TelegramWebhookRepository(session),
+        issuer,
+        telegram,
+        config,
+    )
+
+
+def get_ingress_service(
+    session: AsyncSession = Depends(get_session),  # noqa: B008
+    issuer: AuthFortressClient = Depends(get_issuer),  # noqa: B008
+) -> TelegramIngressService:  # noqa: B008
+    return TelegramIngressService(
+        TelegramBotRepository(session), TelegramIngressRepository(session), issuer
     )

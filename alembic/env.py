@@ -15,9 +15,12 @@ from src.infrastructure.db.models import (  # noqa: F401
     ApiKeyModel,
     DeliveryAttemptModel,
     EndpointModel,
+    PlatformIngressOutboxModel,
     SourceModel,
     SubscriptionModel,
     TelegramBotModel,
+    TelegramBotWebhookModel,
+    TelegramIngressEventModel,
     UserModel,
     WebhookEventModel,
 )
@@ -73,4 +76,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     asyncio.run(run_migrations_online())
-

@@ -42,7 +42,7 @@ async def _request(
     *,
     transport: httpx.AsyncBaseTransport | None,
     headers: dict[str, str] | None = None,
-    body: dict[str, str] | None = None,
+    body: dict[str, object] | None = None,
 ) -> tuple[int, Any]:
     # Both clients require bounded replies and credential-safe HTTP telemetry.
     suppress_platform_http_logging()
@@ -150,14 +150,51 @@ class AuthFortressClient:
             context = TenantStatus.model_validate(body)
         except ValueError:
             raise PlatformError() from None
-        if context.tenant_id != tenant_id or context.is_active is not True:
+        if context.tenant_id != tenant_id:
             raise PlatformError()
+        if not context.is_active:
+            raise PlatformError(403)
         return True
 
 
 class TelegramClient:
     def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._transport = transport
+
+    async def set_webhook(self, token: SecretStr, url: str, secret: SecretStr) -> None:
+        raw = token.get_secret_value()
+        if len(raw) > 256 or re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]+", raw) is None:
+            raise PlatformError(400)
+        status, body = await _request(
+            "POST",
+            f"https://api.telegram.org/bot{raw}/setWebhook",
+            transport=self._transport,
+            body={
+                "url": url,
+                "secret_token": secret.get_secret_value(),
+                "allowed_updates": ["message"],
+                "drop_pending_updates": False,
+                "max_connections": 10,
+            },
+        )
+        if (
+            status == 200
+            and isinstance(body, dict)
+            and body.get("ok") is True
+            and body.get("result") is True
+        ):
+            return
+        if (
+            isinstance(body, dict)
+            and body.get("ok") is False
+            and type(body.get("error_code")) is int
+        ):
+            code = body["error_code"]
+            if code in {401, 404} and status in {200, 401, 404}:
+                raise PlatformError(400)
+            if 400 <= code < 500 and code != 429 and status in {200, code}:
+                raise PlatformError(502)
+        raise PlatformError()
 
     async def get_me(self, token: SecretStr) -> TelegramProfile:
         raw = token.get_secret_value()
