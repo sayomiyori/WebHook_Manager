@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 import bcrypt
 
-from src.core.exceptions import ConflictError
+from src.core.exceptions import ConflictError, NotFoundError
 from src.core.security import generate_api_key, hash_api_key
 from src.domain.entities.api_key import ApiKey
 from src.domain.entities.user import User
@@ -68,7 +68,11 @@ class AuthService:
             return
         api_key.last_used_at = datetime.now(UTC)
         api_key.updated_at = api_key.last_used_at
-        await self._api_keys.update(api_key)
+        try:
+            await self._api_keys.update(api_key)
+        except NotFoundError:
+            # Revocation can win the race after the background task reads the key.
+            return
 
     async def revoke_api_key(self, key_id: UUID, owner_id: UUID) -> None:
         api_key = await self._api_keys.get_by_id(key_id)

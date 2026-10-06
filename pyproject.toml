@@ -17,7 +17,7 @@ dependencies = [
   "sentry-sdk[fastapi]",
   "prometheus-client",
   "httpx",
-  "python-jose[cryptography]",
+  "cryptography",
   "passlib[bcrypt]",
   "psycopg[binary]",
 ]

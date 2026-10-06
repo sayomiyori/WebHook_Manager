@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.exceptions import NotFoundError
 from src.domain.entities.api_key import ApiKey
 from src.domain.interfaces.repositories import ApiKeyRepository
 from src.infrastructure.db.mappers import api_key_to_entity, api_key_to_model
@@ -49,11 +50,29 @@ class PostgresApiKeyRepository(ApiKeyRepository):
         return api_key_to_entity(model)
 
     async def update(self, api_key: ApiKey) -> ApiKey:
-        model = api_key_to_model(api_key)
-        merged = await self._session.merge(model)
+        # Updating usage must never recreate a concurrently revoked credential.
+        stmt = (
+            update(ApiKeyModel)
+            .where(ApiKeyModel.id == api_key.id)
+            .values(
+                key_prefix=api_key.key_prefix,
+                key_hash=api_key.key_hash,
+                name=api_key.name,
+                owner_id=api_key.owner_id,
+                last_used_at=api_key.last_used_at,
+                is_active=api_key.is_active,
+                created_at=api_key.created_at,
+                updated_at=api_key.updated_at,
+            )
+            .returning(ApiKeyModel)
+            .execution_options(populate_existing=True)
+        )
+        model = (await self._session.execute(stmt)).scalar_one_or_none()
+        if model is None:
+            raise NotFoundError("API key no longer exists")
+        entity = api_key_to_entity(model)
         await self._session.commit()
-        await self._session.refresh(merged)
-        return api_key_to_entity(merged)
+        return entity
 
     async def delete(self, id: UUID) -> None:
         await self._session.execute(delete(ApiKeyModel).where(ApiKeyModel.id == id))

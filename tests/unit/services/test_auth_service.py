@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from src.core.exceptions import ConflictError
+from src.core.exceptions import ConflictError, NotFoundError
 from src.domain.entities.api_key import ApiKey
 from src.domain.entities.user import User
 from src.services.auth_service import AuthService, hash_password, verify_password
@@ -133,6 +133,16 @@ async def test_mark_key_used_updates_last_used_at() -> None:
     assert key.last_used_at is None
     await svc.mark_key_used(key_id=key.id)
     api_keys.update.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mark_key_used_tolerates_concurrent_revocation() -> None:
+    api_keys = Mock()
+    key = _api_key(owner_id=uuid4())
+    api_keys.get_by_id = AsyncMock(return_value=key)
+    api_keys.update = AsyncMock(side_effect=NotFoundError("API key no longer exists"))
+    await AuthService(api_keys, Mock()).mark_key_used(key.id)
+    api_keys.update.assert_awaited_once_with(key)
 
 
 @pytest.mark.asyncio

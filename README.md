@@ -225,7 +225,8 @@ The test suite is designed to reach **>= 80% coverage**.
 ### CI/CD
 
 - CI workflow runs on `push` to `main/develop` and on PRs targeting `main`
-- CD workflow runs on `push` to `main` and deploys only if all CI jobs pass
+- CD workflow builds and publishes image tags on `push` to `main`; it does not
+  deploy to a production host or enforce a CI completion dependency.
 
 ### Deployment assets
 

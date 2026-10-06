@@ -77,3 +77,19 @@ returned the new computed origin in its response. Both dry-run and apply now
 report the prepared URL, consistent with v1's no-URL-replacement contract.
 Regression changes the origin after an ambiguous setup and checks the dry-run,
 provider request and success response against the original stored URL.
+
+## 2026-10-06 — Security CI audited tools instead of the application
+
+The legacy safety check command exited64; the job installed only Safety/Bandit,
+not project dependencies. Install the project and use pip-audit after Bandit.
+Remove unused python-jose (including its vulnerable ecdsa dependency); declare
+cryptography directly because existing bot/webhook encryption imports Fernet.
+Keep dependency audit failures blocking; no advisories are ignored.
+
+## 2026-10-06 — API-key usage update raced with revocation
+
+Background usage tracking used ORM merge and refreshed after commit. Concurrent
+revocation could recreate the deleted credential or fail after the HTTP response.
+Use UPDATE RETURNING, materialize before commit, and treat a missing key as a
+background no-op. PostgreSQL regression deletes the key through an independent
+session before the stale update and verifies that authentication remains denied.
