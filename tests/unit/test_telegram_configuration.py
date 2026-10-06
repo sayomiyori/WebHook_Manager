@@ -78,3 +78,19 @@ def test_ingress_key_cannot_reuse_context_key():
         configuration(
             WEBHOOK_AGENT_INGRESS_KEY="fictional-context-key-at-least-32-bytes"
         )
+
+
+def test_reply_key_required_only_for_ai_optin():
+    assert not configuration().TELEGRAM_REPLIES_ENABLED
+    with pytest.raises(ValidationError):
+        configuration(TELEGRAM_REPLIES_ENABLED=True)
+    enabled = configuration(
+        TELEGRAM_REPLIES_ENABLED=True,
+        AGENT_WEBHOOK_REPLY_KEY="fictional-reply-key-at-least-32-bytes",
+    )
+    assert enabled.TELEGRAM_REPLIES_ENABLED
+    with pytest.raises(ValidationError):
+        configuration(
+            TELEGRAM_REPLIES_ENABLED=True,
+            AGENT_WEBHOOK_REPLY_KEY="fictional-ingress-key-at-least-32-bytes",
+        )

@@ -18,6 +18,7 @@ from src.infrastructure.db.models import (  # noqa: F401
     PlatformIngressOutboxModel,
     SourceModel,
     SubscriptionModel,
+    TelegramAnswerModel,
     TelegramBotModel,
     TelegramBotWebhookModel,
     TelegramIngressEventModel,

@@ -220,6 +220,28 @@ pytest --cov=src --cov-report=term-missing
 
 The test suite is designed to reach **>= 80% coverage**.
 
+### Signed Telegram answer admission
+
+`TELEGRAM_REPLIES_ENABLED=false` keeps the new answer endpoint disabled.
+Enabling it requires the existing platform/Telegram configuration and an
+independent `AGENT_WEBHOOK_REPLY_KEY`, matching AgentHub's reply-signing key.
+Apply migration `3cc3bb772105` before enabling it; no automatic stamping occurs.
+
+`POST /internal/v1/telegram/answers` verifies the raw-body HMAC, streams at most
+1 MiB and validates the strict `telegram.answer.created` v1 envelope. It binds
+tenant, bot, ingress, correlation and the published AgentHub job. The destination
+chat comes only from the stored normalized ingress, never from the caller.
+Fresh active tenant/bot checks also apply to identical replays. One atomic scoped
+answer/send intent returns `{event_id, delivery_id, state}`: 202 on creation,
+200 on replay. The handler never calls Telegram.
+
+An original ingress publication whose job receipt is not persisted yet returns
+409 with `detail=ingress_publication_not_ready`; AgentHub may retry the same
+immutable envelope. Content/identity conflict returns the terminal distinct
+`detail=answer_conflict`. Destination/token fields, unknown fields, duplicate JSON
+keys, non-UTC timestamps and malformed text are rejected. This checkpoint covers
+durable answer admission; the Telegram sender and live acceptance remain pending.
+
 ## Production
 
 ### CI/CD

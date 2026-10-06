@@ -6,6 +6,7 @@ from src.infrastructure.db.models.platform_ingress_outbox import (
 )
 from src.infrastructure.db.models.source import SourceModel
 from src.infrastructure.db.models.subscription import SubscriptionModel
+from src.infrastructure.db.models.telegram_answer import TelegramAnswerModel
 from src.infrastructure.db.models.telegram_bot import TelegramBotModel
 from src.infrastructure.db.models.telegram_bot_webhook import TelegramBotWebhookModel
 from src.infrastructure.db.models.telegram_ingress_event import (
@@ -21,6 +22,7 @@ __all__ = [
     "SourceModel",
     "SubscriptionModel",
     "TelegramBotModel",
+    "TelegramAnswerModel",
     "TelegramBotWebhookModel",
     "TelegramIngressEventModel",
     "PlatformIngressOutboxModel",

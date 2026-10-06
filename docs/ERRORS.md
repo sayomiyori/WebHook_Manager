@@ -93,3 +93,12 @@ revocation could recreate the deleted credential or fail after the HTTP response
 Use UPDATE RETURNING, materialize before commit, and treat a missing key as a
 background no-op. PostgreSQL regression deletes the key through an independent
 session before the stale update and verifies that authentication remains denied.
+
+## 2026-10-06 - Forward answer migration dependency order
+
+The first empty-test-database upgrade of the new answer migration failed because
+Alembic placed the ingress scope unique constraint after the referencing table.
+The unpublished migration now creates the constraint before the answer FK and
+drops it after the answer table during rollback. The isolated approved
+3cc3bb772105 -> 9a3c012bd7ef -> 3cc3bb772105 roundtrip and schema check passed.
+No previously published migration was changed.

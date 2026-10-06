@@ -37,6 +37,7 @@ class TelegramIngressEventModel(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     __table_args__ = (
+        UniqueConstraint("id", "tenant_id", "bot_id", name="uq_telegram_ingress_scope"),
         UniqueConstraint("bot_id", "update_id", name="uq_telegram_ingress_bot_update"),
         CheckConstraint(
             "state IN ('accepted','ignored')", name="ck_telegram_ingress_state"

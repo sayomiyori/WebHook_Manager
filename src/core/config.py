@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     AGENTHUB_BASE_URL: str | None = None
     WEBHOOK_AGENT_INGRESS_KEY: SecretStr | None = None
     PLATFORM_PUBLICATION_MAX_ATTEMPTS: int = 10
+    TELEGRAM_REPLIES_ENABLED: bool = False
+    AGENT_WEBHOOK_REPLY_KEY: SecretStr | None = None
 
     @field_validator("AGENTHUB_BASE_URL")
     @classmethod
@@ -151,6 +153,7 @@ class Settings(BaseSettings):
         "AUTHFORTRESS_WEBHOOK_SERVICE_KEY",
         "WEBHOOK_AGENT_CONTEXT_KEY",
         "WEBHOOK_AGENT_INGRESS_KEY",
+        "AGENT_WEBHOOK_REPLY_KEY",
     )
     @classmethod
     def _validate_service_key(cls, value: SecretStr | None) -> SecretStr | None:
@@ -188,6 +191,7 @@ class Settings(BaseSettings):
                 self.WEBHOOK_AGENT_CONTEXT_KEY,
                 self.BOT_CREDENTIALS_KEY,
                 self.WEBHOOK_AGENT_INGRESS_KEY,
+                self.AGENT_WEBHOOK_REPLY_KEY,
             )
             if key is not None
         ]
@@ -206,6 +210,10 @@ class Settings(BaseSettings):
             if not self.PLATFORM_BOTS_ENABLED or not self.TELEGRAM_WEBHOOK_ORIGIN:
                 raise ValueError("Platform Telegram configuration is incomplete")
             self.require_publication()
+        if self.TELEGRAM_REPLIES_ENABLED and (
+            not self.PLATFORM_TELEGRAM_ENABLED or self.AGENT_WEBHOOK_REPLY_KEY is None
+        ):
+            raise ValueError("Platform Telegram AI configuration is incomplete")
         return self
 
     @field_validator("SECRET_KEY")

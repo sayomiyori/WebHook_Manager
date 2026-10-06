@@ -25,6 +25,7 @@ from src.api.v1.routers import (
 )
 from src.api.v1.routers.bots import internal_router as bot_internal_router
 from src.api.v1.routers.bots import router as bot_router
+from src.api.v1.routers.telegram_answers import router as telegram_answers_router
 from src.api.v1.routers.telegram_ingress import router as telegram_ingress_router
 from src.core.config import settings
 from src.core.exceptions import (
@@ -128,6 +129,7 @@ app.include_router(metrics_router)
 app.include_router(bot_router)
 app.include_router(bot_internal_router)
 app.include_router(telegram_ingress_router)
+app.include_router(telegram_answers_router)
 
 v1 = APIRouter(prefix="/api/v1")
 v1.include_router(auth_router)
