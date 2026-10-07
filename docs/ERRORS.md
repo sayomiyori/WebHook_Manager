@@ -102,3 +102,12 @@ The unpublished migration now creates the constraint before the answer FK and
 drops it after the answer table during rollback. The isolated approved
 3cc3bb772105 -> 9a3c012bd7ef -> 3cc3bb772105 roundtrip and schema check passed.
 No previously published migration was changed.
+
+## 2026-10-06 - Inactive bot obtained a send claim
+
+The first sender implementation checked bot activation only after claiming an
+answer. A negative test reproduced attempts=1 for an already inactive bot.
+Claims now lock and check the canonical bot before claiming the answer; inactive
+records become cancelled without consuming an attempt. Bot-before-answer lock
+order matches admission and send-start. Fresh issuer/bot checks still run before
+the committed external-effect marker.

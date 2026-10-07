@@ -240,7 +240,36 @@ An original ingress publication whose job receipt is not persisted yet returns
 immutable envelope. Content/identity conflict returns the terminal distinct
 `detail=answer_conflict`. Destination/token fields, unknown fields, duplicate JSON
 keys, non-UTC timestamps and malformed text are rejected. This checkpoint covers
-durable answer admission; the Telegram sender and live acceptance remain pending.
+durable answer admission. Live Telegram acceptance remains unverified.
+
+### Durable Telegram sending
+
+Run the dedicated Linux prefork worker and independent scanner:
+
+```powershell
+celery -A src.infrastructure.queue.celery_app:celery_app worker --concurrency=1 --queues=telegram_send
+python -m scripts.recover_telegram_answers
+```
+
+With `TELEGRAM_REPLIES_ENABLED=true`, the scanner discovers persisted send intents
+in batches of at most 100 every five seconds. Queue messages contain only UUIDs.
+Claims use a fresh UUID and database-clock 60-second lease; an inactive bot cannot
+receive a new claim. Before sending, the worker checks fresh tenant/bot status,
+decrypts its scoped credential and commits `send_started_at`.
+
+`sendMessage` uses only the stored chat/text, without parse mode, redirects,
+inherited proxies or HTTP retries. A request has a 20-second total deadline and
+a 64 KiB identity JSON response cap. Confirmed success stores message_id before
+`succeeded`. Confirmed permanent rejection fails; explicit429/5xx rejection may
+retry at most five attempts. Retry-after is capped at 3600 seconds, ordinary
+backoff at 60 seconds. The worker has 25-second soft/30-second hard limits.
+
+Timeout, disconnect, malformed success, uncertain persistence and expired
+send-started claims become `unknown` and never automatically resend. Only expired
+pre-send claims recover for another attempt. Stale claims cannot overwrite a
+new outcome. Broker failure leaves recoverable rows in PostgreSQL; neither the
+scanner nor the HTTP admission handler performs Telegram sending. There is no
+manual resend API; operator reconciliation requires separate authorization.
 
 ## Production
 

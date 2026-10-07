@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from pydantic import BaseModel, Field, SecretStr, StrictBool, StrictInt, StrictS
 from src.core.config import Settings
 from src.core.logging import suppress_platform_http_logging
 from src.infrastructure.platform.errors import PlatformError
+from src.infrastructure.platform.telegram_update import parse_update
 
 TIMEOUT = httpx.Timeout(5.0, connect=2.0)
 MAX_RESPONSE_BYTES = 65536
@@ -34,6 +36,19 @@ class TelegramProfile(BaseModel):
     id: Annotated[StrictInt, Field(gt=0, le=2**63 - 1)]
     is_bot: StrictBool
     username: Annotated[StrictStr, Field(max_length=128)] | None = None
+
+
+@dataclass(frozen=True)
+class TelegramSendResult:
+    message_id: int
+
+
+class TelegramSendError(Exception):
+    def __init__(
+        self, state: Literal["pending", "failed", "unknown"], retry_after: int = 0
+    ) -> None:
+        self.state, self.retry_after = state, retry_after
+        super().__init__("Telegram send unavailable")
 
 
 async def _request(
@@ -160,6 +175,94 @@ class AuthFortressClient:
 class TelegramClient:
     def __init__(self, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._transport = transport
+
+    async def send_message(
+        self, token: SecretStr, chat_id: int, text: str
+    ) -> TelegramSendResult:
+        raw = token.get_secret_value()
+        if (
+            len(raw) > 256
+            or re.fullmatch(r"[0-9]+:[A-Za-z0-9_-]+", raw) is None
+            or type(chat_id) is not int
+            or not -(2**63) <= chat_id <= 2**63 - 1
+            or not 1 <= len(text) <= 4096
+            or not text.strip()
+            or "\x00" in text
+        ):
+            raise TelegramSendError("failed")
+        suppress_platform_http_logging()
+        try:
+            text.encode("utf-8")
+            async with (
+                asyncio.timeout(20),
+                httpx.AsyncClient(
+                    timeout=httpx.Timeout(20, connect=2),
+                    trust_env=False,
+                    follow_redirects=False,
+                    verify=True,
+                    transport=self._transport,
+                ) as client,
+                client.stream(
+                    "POST",
+                    f"https://api.telegram.org/bot{raw}/sendMessage",
+                    headers={"Accept-Encoding": "identity"},
+                    json={"chat_id": chat_id, "text": text},
+                ) as response,
+            ):
+                if (
+                    response.headers.get("content-encoding", "identity") != "identity"
+                    or response.headers.get("content-type", "")
+                    .split(";", 1)[0]
+                    .strip()
+                    .lower()
+                    != "application/json"
+                ):
+                    raise TelegramSendError("unknown")
+                data = bytearray()
+                async for chunk in response.aiter_bytes(chunk_size=8192):
+                    if len(data) + len(chunk) > MAX_RESPONSE_BYTES:
+                        raise TelegramSendError("unknown")
+                    data.extend(chunk)
+                body = parse_update(bytes(data))
+                status = response.status_code
+                if status == 200 and body.get("ok") is True:
+                    result = body.get("result")
+                    if isinstance(result, dict):
+                        message = result.get("message_id")
+                        chat = result.get("chat")
+                        if (
+                            type(message) is int
+                            and 0 < message <= 2**63 - 1
+                            and isinstance(chat, dict)
+                            and type(chat.get("id")) is int
+                            and chat["id"] == chat_id
+                        ):
+                            return TelegramSendResult(message)
+                    raise TelegramSendError("unknown")
+                code = body.get("error_code")
+                if (
+                    body.get("ok") is False
+                    and type(code) is int
+                    and status in {200, code}
+                ):
+                    if code in {400, 401, 403, 404}:
+                        raise TelegramSendError("failed")
+                    if 500 <= code < 600:
+                        raise TelegramSendError("pending")
+                    parameters = body.get("parameters")
+                    if code == 429 and isinstance(parameters, dict):
+                        delay = parameters.get("retry_after")
+                        if type(delay) is int and delay > 0:
+                            raise TelegramSendError("pending", min(delay, 3600))
+                raise TelegramSendError("unknown")
+        except (
+            httpx.HTTPError,
+            TimeoutError,
+            ValueError,
+            UnicodeError,
+            RecursionError,
+        ):
+            raise TelegramSendError("unknown") from None
 
     async def set_webhook(self, token: SecretStr, url: str, secret: SecretStr) -> None:
         raw = token.get_secret_value()

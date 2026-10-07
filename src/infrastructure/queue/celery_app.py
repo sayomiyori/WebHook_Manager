@@ -10,6 +10,7 @@ celery_app = Celery(
     include=[
         "src.infrastructure.queue.tasks.deliver_webhook",
         "src.infrastructure.queue.tasks.publish_platform_ingress",
+        "src.infrastructure.queue.tasks.send_telegram_answer",
     ],
 )
 
