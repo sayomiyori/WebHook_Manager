@@ -19,7 +19,14 @@ class TelegramWebhookRepository:
         self.session = session
 
     async def claim(
-        self, bot_id: UUID, tenant_id: UUID, url: str, encrypted: str, digest: str
+        self,
+        bot_id: UUID,
+        tenant_id: UUID,
+        url: str,
+        encrypted: str,
+        digest: str,
+        *,
+        replace_url: bool = False,
     ) -> Webhook:
         await self.session.execute(
             insert(Webhook)
@@ -40,11 +47,15 @@ class TelegramWebhookRepository:
                 .execution_options(populate_existing=True)
             )
         ).scalar_one()
-        if row.state == "configured":
+        changing_url = replace_url and row.url != url
+        if row.state == "configured" and not changing_url:
             return row
         now = (await self.session.execute(select(func.clock_timestamp()))).scalar_one()
         if row.claim_id and row.claim_deadline and row.claim_deadline > now:
             raise ConflictError()
+        if changing_url:
+            # Keep the secret so updates queued at the old URL can authenticate.
+            row.url = url
         row.claim_id = uuid4()
         row.claim_deadline = now + timedelta(seconds=60)
         row.state = "configuring"

@@ -15,6 +15,7 @@ from src.api.main import app
 from src.api.v1.dependencies.platform import get_platform_settings, get_telegram
 from src.infrastructure.db.models.telegram_bot_webhook import TelegramBotWebhookModel
 from src.infrastructure.platform.clients import TelegramClient
+from src.infrastructure.platform.webhook_credentials import WebhookCredentials
 
 
 @pytest.fixture
@@ -41,7 +42,11 @@ def telegram_platform(registry_platform):
             state["setup_calls"].append(json.loads(request.content))
             return httpx.Response(
                 state["setup_status"],
-                json={"ok": True, "result": state["setup_result"]},
+                json=(
+                    {"ok": False, "error_code": 400}
+                    if state["setup_status"] == 400
+                    else {"ok": True, "result": state["setup_result"]}
+                ),
             )
         return httpx.Response(
             200,
@@ -177,7 +182,10 @@ async def test_revoked_owner_releases_claim_before_provider(
     assert row.state == "failed" and row.claim_id is None
 
 
-async def test_concurrent_setup_makes_one_provider_call(client, telegram_platform):
+@pytest.mark.parametrize("replace_url", [False, True])
+async def test_concurrent_setup_makes_one_provider_call(
+    client, telegram_platform, replace_url
+):
     from tests.integration.test_platform_publication import provision
 
     from src.core.dependencies import get_session
@@ -196,6 +204,21 @@ async def test_concurrent_setup_makes_one_provider_call(client, telegram_platfor
             envelope.tenant_id,
             SecretStr("123456:fictional-verification-token"),
         )
+        if replace_url:
+            cipher = WebhookCredentials(config.BOT_CREDENTIALS_KEY)
+            secret = SecretStr("fictional-existing-webhook-secret")
+            session.add(
+                TelegramBotWebhookModel(
+                    bot_id=envelope.bot_id,
+                    tenant_id=envelope.tenant_id,
+                    url=f"https://old.example.com/webhooks/telegram/{envelope.bot_id}",
+                    encrypted_secret=cipher.encrypt(
+                        envelope.bot_id, envelope.tenant_id, secret
+                    ),
+                    secret_digest=cipher.digest(secret),
+                    state="configured",
+                )
+            )
         session.commit()
 
     async def independent_session():
@@ -216,13 +239,24 @@ async def test_concurrent_setup_makes_one_provider_call(client, telegram_platfor
         transport=httpx.MockTransport(provider)
     )
     route = base(state) + "/" + str(envelope.bot_id) + "/webhook"
+    if replace_url:
+        configured = config.model_copy(
+            update={"TELEGRAM_WEBHOOK_ORIGIN": "https://new.example.com"}
+        )
+        app.dependency_overrides[get_platform_settings] = lambda: configured
     first = asyncio.create_task(
-        client.post(route, headers=state["headers"], json={"dry_run": False})
+        client.post(
+            route,
+            headers=state["headers"],
+            json={"dry_run": False, "replace_url": replace_url},
+        )
     )
     try:
         await asyncio.wait_for(started.wait(), timeout=5)
         second = await client.post(
-            route, headers=state["headers"], json={"dry_run": False}
+            route,
+            headers=state["headers"],
+            json={"dry_run": False, "replace_url": replace_url},
         )
         assert second.status_code == 409
     finally:
@@ -233,3 +267,96 @@ async def test_concurrent_setup_makes_one_provider_call(client, telegram_platfor
         await client.post(route, headers=state["headers"], json={"dry_run": False})
     ).status_code == 200
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("provider_status", [200, 400, 500])
+async def test_replace_url_preserves_secret_dry_run_and_retry(
+    client, db_session, telegram_platform, provider_status
+):
+    state = telegram_platform
+    bot = (await create(client, state)).json()
+    route = base(state) + "/" + bot["id"] + "/webhook"
+    assert (
+        await client.post(route, headers=state["headers"], json={"dry_run": False})
+    ).status_code == 200
+    original = dict(state["setup_calls"][0])
+    config = app.dependency_overrides[get_platform_settings]()
+    app.dependency_overrides[get_platform_settings] = lambda: config.model_copy(
+        update={"TELEGRAM_WEBHOOK_ORIGIN": "https://new.example.com"}
+    )
+    # Origin changes alone preserve the old API contract and cause no provider call.
+    unchanged = await client.post(
+        route, headers=state["headers"], json={"dry_run": False}
+    )
+    assert unchanged.json()["webhook_url"] == original["url"]
+    target = "https://new.example.com/webhooks/telegram/" + bot["id"]
+    preview = await client.post(
+        route, headers=state["headers"], json={"dry_run": True, "replace_url": True}
+    )
+    assert preview.status_code == 200 and preview.json()["webhook_url"] == target
+    row = await db_session.get(
+        TelegramBotWebhookModel, UUID(bot["id"]), populate_existing=True
+    )
+    assert row.url == original["url"] and row.state == "configured"
+    encrypted, digest = row.encrypted_secret, row.secret_digest
+    assert len(state["setup_calls"]) == 1
+    state["setup_status"] = provider_status
+    response = await client.post(
+        route, headers=state["headers"], json={"dry_run": False, "replace_url": True}
+    )
+    assert response.status_code == (
+        200 if provider_status == 200 else 503 if provider_status == 500 else 502
+    )
+    await db_session.refresh(row)
+    assert row.url == target
+    assert row.encrypted_secret == encrypted and row.secret_digest == digest
+    assert (
+        row.state == {200: "configured", 400: "failed", 500: "unknown"}[provider_status]
+    )
+    assert state["setup_calls"][1] == {**original, "url": target}
+    assert original["secret_token"] not in response.text
+    state["setup_status"] = 200
+    # Ordinary retry resumes the persisted target after a failed/ambiguous replacement.
+    retry = await client.post(route, headers=state["headers"], json={"dry_run": False})
+    assert retry.status_code == 200 and retry.json()["webhook_url"] == target
+    assert len(state["setup_calls"]) == (2 if provider_status == 200 else 3)
+    repeated = await client.post(
+        route, headers=state["headers"], json={"dry_run": False, "replace_url": True}
+    )
+    assert repeated.status_code == 200
+    assert len(state["setup_calls"]) == (2 if provider_status == 200 else 3)
+
+
+async def test_replacement_rejects_unauthorized_scope_and_invalid_input(
+    client, telegram_platform
+):
+    state = telegram_platform
+    bot = (await create(client, state)).json()
+    route = base(state) + "/" + bot["id"] + "/webhook"
+    payload = {"dry_run": False, "replace_url": True}
+    assert (await client.post(route, json=payload)).status_code == 401
+    state["role"] = "member"
+    assert (
+        await client.post(route, headers=state["headers"], json=payload)
+    ).status_code == 403
+    state["role"] = "owner"
+    old_tenant = state["tenant"]
+    state["tenant"] = uuid4()
+    other_route = base(state) + "/" + bot["id"] + "/webhook"
+    assert (
+        await client.post(other_route, headers=state["headers"], json=payload)
+    ).status_code == 404
+    state["tenant"] = old_tenant
+    for bad in ("true", 1, None):
+        invalid = await client.post(
+            route, headers=state["headers"], json={"dry_run": True, "replace_url": bad}
+        )
+        assert invalid.status_code == 422
+    assert (
+        await client.post(
+            route,
+            headers=state["headers"],
+            json={**payload, "url": "https://arbitrary.example.com"},
+        )
+    ).status_code == 422
+    assert state["setup_calls"] == []

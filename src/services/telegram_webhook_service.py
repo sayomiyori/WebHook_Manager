@@ -39,7 +39,13 @@ class TelegramWebhookService:
         )
 
     async def provision(
-        self, tenant_id: UUID, bot_id: UUID, bearer: SecretStr, dry_run: bool
+        self,
+        tenant_id: UUID,
+        bot_id: UUID,
+        bearer: SecretStr,
+        dry_run: bool,
+        *,
+        replace_url: bool = False,
     ) -> WebhookProvisionView:
         context = await self.issuer.authorize(tenant_id, bearer, "bot.manage")
         bot = await self.bots.get(bot_id, tenant_id)
@@ -49,7 +55,7 @@ class TelegramWebhookService:
             raise ForbiddenError()
         url = (
             bot.webhook.url
-            if bot.webhook is not None
+            if bot.webhook is not None and not replace_url
             else f"{self.config.TELEGRAM_WEBHOOK_ORIGIN}/webhooks/telegram/{bot_id}"
         )
         if dry_run:
@@ -67,6 +73,7 @@ class TelegramWebhookService:
             url,
             cipher.encrypt(bot_id, tenant_id, secret),
             cipher.digest(secret),
+            replace_url=replace_url,
         )
         if row.state == "configured":
             return WebhookProvisionView(

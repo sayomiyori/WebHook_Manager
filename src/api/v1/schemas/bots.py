@@ -52,6 +52,7 @@ class BotView(BaseModel):
 class WebhookProvisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     dry_run: StrictBool
+    replace_url: StrictBool = False
 
 
 class WebhookProvisionView(BaseModel):

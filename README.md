@@ -165,6 +165,21 @@ is `failed`; ambiguous failure or an expired interrupted attempt is `unknown`.
 An active attempt is `configuring`. Retry reuses the stored secret and URL;
 concurrent attempts return 409. `getWebhookInfo` cannot prove secret installation.
 
+For an operator origin change, explicitly send `{"dry_run":true,"replace_url":true}`
+to preview the URL from the current `TELEGRAM_WEBHOOK_ORIGIN`, then apply with
+`{"dry_run":false,"replace_url":true}` after reviewing the destination. The URL
+cannot be supplied in the request. Without `replace_url`, the existing stored
+URL/retry behavior is unchanged; changing environment alone does not relocate bots.
+Replacement keeps the encrypted secret, claims the same per-bot lock and makes
+one provider call. Repeating an already configured target is a no-op. An active
+claim returns 409; failed/ambiguous replacement stays `failed`/`unknown` at the
+new target and can be resumed by an ordinary request. Intake still authenticates
+the preserved secret during configuring/unknown; a definite failure blocks intake
+with 403 until retried. Pending Telegram updates are not explicitly dropped.
+To return to the old target, restore the operator origin and explicitly replace
+again. This changes that bot's real Telegram destination; preview and approval
+are still required for a live operation.
+
 Telegram posts to `/webhooks/telegram/{bot_id}` with exactly one
 `X-Telegram-Bot-Api-Secret-Token`. Authentication precedes bounded JSON streaming
 (1 MiB). Private nonempty text is accepted with 202; supported non-text updates

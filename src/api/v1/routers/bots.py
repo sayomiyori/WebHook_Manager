@@ -82,7 +82,9 @@ async def provision_webhook(
     bearer: SecretStr = Depends(get_bearer),  # noqa: B008
     service: TelegramWebhookService = Depends(get_webhook_service),  # noqa: B008
 ) -> WebhookProvisionView:  # noqa: B008
-    return await service.provision(tenant_id, bot_id, bearer, body.dry_run)
+    return await service.provision(
+        tenant_id, bot_id, bearer, body.dry_run, replace_url=body.replace_url
+    )
 
 
 @router.post("", response_model=BotView, status_code=201)

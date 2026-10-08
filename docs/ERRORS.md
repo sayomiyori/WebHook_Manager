@@ -78,6 +78,16 @@ report the prepared URL, consistent with v1's no-URL-replacement contract.
 Regression changes the origin after an ambiguous setup and checks the dry-run,
 provider request and success response against the original stored URL.
 
+## 2026-10-08 — Explicit webhook relocation after an origin change
+
+The original retry contract deliberately retained the stored origin, so a new
+tunnel/domain could not replace it through the API. Add opt-in `replace_url`
+with a side-effect-free preview and the existing owner/tenant authorization,
+per-bot claim and ambiguous-result handling. Preserve the secret and default
+retry behavior. Regressions cover unchanged defaults, preview without writes,
+replacement/idempotency, definite and ambiguous failures, concurrent replacement,
+invalid input and unauthorized/cross-tenant requests. No schema migration needed.
+
 ## 2026-10-06 — Security CI audited tools instead of the application
 
 The legacy safety check command exited64; the job installed only Safety/Bandit,
