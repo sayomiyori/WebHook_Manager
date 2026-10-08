@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -11,6 +12,7 @@ import redis
 import structlog
 
 from src.core.config import settings
+from src.core.logging import suppress_platform_http_logging
 from src.core.metrics import deliveries_total, delivery_duration_seconds
 from src.core.security import hmac_sha256_hex, sanitize_webhook_headers
 from src.domain.enums import DeliveryStatus
@@ -38,6 +40,7 @@ def deliver_webhook(
     delivery_uuid = UUID(delivery_id)
     event_uuid = UUID(event_id)
     endpoint_uuid = UUID(endpoint_id)
+    suppress_platform_http_logging()
 
     # Celery worker runs in a sync context, so use sync Redis circuit breaker.
     cb_redis = redis.Redis.from_url(str(settings.REDIS_URL), decode_responses=True)
@@ -104,7 +107,7 @@ def deliver_webhook(
 
         started = time.perf_counter()
         try:
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=settings.DELIVERY_TIMEOUT_SECONDS) as client:
                 resp = client.post(
                     endpoint.url,
                     content=payload_bytes,
@@ -115,34 +118,14 @@ def deliver_webhook(
             body_text = resp.text
             delivery.response_body = body_text[:1000] if body_text else None
 
-            if 200 <= resp.status_code < 300:
-                delivery.status = DeliveryStatus.SUCCESS
-                delivery.error_message = None
-                delivery.updated_at = datetime.now(UTC)
-                endpoint.failure_count = 0
-                endpoint.updated_at = delivery.updated_at
-                session.commit()
-                cb.reset(endpoint_id=endpoint_id)
-                deliveries_total.labels(status="success").inc()
-                delivery_duration_seconds.observe(duration_ms / 1000)
-                log.info(
-                    "delivery_attempt",
-                    delivery_id=delivery_id,
-                    endpoint_url=endpoint.url,
-                    attempt_number=delivery.attempt_number,
-                    response_code=resp.status_code,
-                    duration_ms=duration_ms,
-                )
-                return {"status": "success", "response_code": resp.status_code}
-
-            # Non-2xx counts as failure.
-            raise RuntimeError(f"Non-2xx response: {resp.status_code}")
+            if not 200 <= resp.status_code < 300:
+                raise RuntimeError(f"Non-2xx response: {resp.status_code}")
         except Exception as exc:  # noqa: BLE001
             duration_ms = int((time.perf_counter() - started) * 1000)
             endpoint.failure_count += 1
             endpoint.updated_at = datetime.now(UTC)
             delivery.status = DeliveryStatus.FAILED
-            delivery.error_message = str(exc)
+            delivery.error_message = type(exc).__name__
             delivery.updated_at = endpoint.updated_at
 
             cb_count = cb.record_failure(endpoint_id=endpoint_id, ttl_seconds=600)
@@ -163,7 +146,7 @@ def deliver_webhook(
             log.info(
                 "delivery_attempt",
                 delivery_id=delivery_id,
-                endpoint_url=endpoint.url,
+                endpoint_id=endpoint_id,
                 attempt_number=delivery.attempt_number,
                 response_code=delivery.response_code,
                 duration_ms=duration_ms,
@@ -173,4 +156,27 @@ def deliver_webhook(
                 return {"status": "failed", "response_code": delivery.response_code}
 
             delay = get_backoff_delay(max(attempt_no - 1, 0))
-            raise self.retry(countdown=delay, exc=exc) from exc
+            raise self.retry(
+                countdown=delay, exc=RuntimeError("Webhook delivery failed")
+            ) from None
+
+        delivery.status = DeliveryStatus.SUCCESS
+        delivery.error_message = None
+        delivery.updated_at = datetime.now(UTC)
+        endpoint.failure_count = 0
+        endpoint.updated_at = delivery.updated_at
+        session.commit()
+        # Cache maintenance must never turn a committed success into a resend.
+        with suppress(redis.RedisError):
+            cb.reset(endpoint_id=endpoint_id)
+        deliveries_total.labels(status="success").inc()
+        delivery_duration_seconds.observe(duration_ms / 1000)
+        log.info(
+            "delivery_attempt",
+            delivery_id=delivery_id,
+            endpoint_id=endpoint_id,
+            attempt_number=delivery.attempt_number,
+            response_code=resp.status_code,
+            duration_ms=duration_ms,
+        )
+        return {"status": "success", "response_code": resp.status_code}

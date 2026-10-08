@@ -61,7 +61,16 @@ class EventService:
     async def get_matching_subscriptions(
         self, event: WebhookEvent
     ) -> list[Subscription]:
-        subs = await self._subs.get_by_source(event.source_id, cursor=None, limit=100)
+        subs: list[Subscription] = []
+        cursor = None
+        while True:
+            page = await self._subs.get_by_source(
+                event.source_id, cursor=cursor, limit=100
+            )
+            subs.extend(page)
+            if len(page) < 100:
+                break
+            cursor = page[-1].id
         et = event.event_type or ""
 
         matches: list[Subscription] = []
@@ -84,4 +93,3 @@ class EventService:
         items = await self._events.get_by_owner(owner_id, cursor, limit)
         next_cursor = items[-1].id if len(items) == min(max(limit, 1), 100) else None
         return items, next_cursor
-

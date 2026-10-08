@@ -129,6 +129,55 @@ def test_worker_success_signature_and_repeat_is_noop(worker_delivery):
         )
 
 
+def test_redis_reset_failure_does_not_repeat_success(worker_delivery, monkeypatch):
+    import redis
+
+    def unavailable(*args, **kwargs):
+        raise redis.ConnectionError("synthetic reset outage")
+
+    monkeypatch.setattr(task_module.SyncCircuitBreaker, "reset", unavailable)
+    factory, attempt_id, event_id, endpoint_id = worker_delivery
+    with respx.mock as boundary:
+        request = boundary.post("https://receiver.worker/hook").mock(
+            return_value=Response(200, json={"ok": True})
+        )
+        result = task_module.deliver_webhook.apply(
+            args=[str(attempt_id), str(event_id), str(endpoint_id)], throw=True
+        )
+        assert result.result["status"] == "success"
+        assert request.call_count == 1
+    with factory() as session:
+        assert (
+            session.get(DeliveryAttemptModel, attempt_id).status
+            == DeliveryStatus.SUCCESS
+        )
+
+
+def test_late_soft_timeout_preserves_success(worker_delivery, monkeypatch):
+    from billiard.exceptions import SoftTimeLimitExceeded
+
+    def timeout(*args, **kwargs):
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(task_module.SyncCircuitBreaker, "reset", timeout)
+    factory, attempt_id, event_id, endpoint_id = worker_delivery
+    args = [str(attempt_id), str(event_id), str(endpoint_id)]
+    with respx.mock as boundary:
+        request = boundary.post("https://receiver.worker/hook").mock(
+            return_value=Response(200)
+        )
+        with pytest.raises(SoftTimeLimitExceeded):
+            task_module.deliver_webhook.apply(args=args, throw=True)
+        with factory() as session:
+            assert (
+                session.get(DeliveryAttemptModel, attempt_id).status
+                == DeliveryStatus.SUCCESS
+            )
+        result = task_module.deliver_webhook.apply(args=args, throw=True)
+        assert result.result["status"] == "success"
+        assert request.call_count == 1
+
+
 @pytest.mark.parametrize("failure", [500, ConnectTimeout("controlled timeout")])
 def test_worker_failures_exhaust_and_count_attempts(worker_delivery, failure):
     factory, attempt_id, event_id, endpoint_id = worker_delivery

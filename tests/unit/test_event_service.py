@@ -205,3 +205,26 @@ async def test_no_idempotency_key_creates_new_event_each_time() -> None:
     assert d2 is False
     assert e1.id != e2.id
 
+
+@pytest.mark.asyncio
+async def test_matching_subscriptions_crosses_repository_page_boundary() -> None:
+    now = datetime.now(UTC)
+    source_id, owner_id = uuid4(), uuid4()
+    subs = [
+        Subscription(
+            id=UUID(int=n),
+            created_at=now,
+            updated_at=now,
+            endpoint_id=uuid4(),
+            source_id=source_id,
+            owner_id=owner_id,
+            event_type_filter=["*"],
+            is_active=True,
+        )
+        for n in range(1, 206)
+    ]
+    service = EventService(FakeEventRepo(), FakeSubscriptionRepo(subs))
+    event, _ = await service.ingest_event(source_id, {}, {}, None, "example")
+    assert [s.id for s in await service.get_matching_subscriptions(event)] == [
+        s.id for s in subs
+    ]

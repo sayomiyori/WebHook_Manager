@@ -57,8 +57,9 @@ async def list_deliveries(
     limit: int = Query(default=50, ge=1, le=100),
     service: DeliveryService = Depends(get_delivery_service),  # noqa: B008
 ) -> CursorPage[DeliveryAttemptResponse]:
-    # history in service is owner-scoped; cursor/limit not included in spec
-    attempts = await service.get_delivery_history(event_id, owner_id)
+    attempts = await service.get_delivery_history(
+        event_id, owner_id, cursor=cursor, limit=limit
+    )
     next_cursor = attempts[-1].id if len(attempts) == limit else None
     return CursorPage[DeliveryAttemptResponse](
         items=[DeliveryAttemptResponse.model_validate(a) for a in attempts],

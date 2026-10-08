@@ -1,5 +1,12 @@
 # WebHook Manager
 
+Local verification on 2026-10-09: 320 tests passed, 85.02% coverage, Ruff and strict
+Mypy passed. Delivery history respects cursor/limit and event matching traverses
+all subscription pages. `DELIVERY_TIMEOUT_SECONDS` controls legacy HTTP delivery.
+Late failures after a persisted success no longer cause a resend; this does not
+provide concurrent claims or exactly-once delivery. Legacy arbitrary destinations
+still require an egress policy before exposing management to untrusted callers.
+
 [![CI](https://github.com/sayomiyori/WebHook_Manager/actions/workflows/ci.yml/badge.svg)](https://github.com/sayomiyori/WebHook_Manager/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/sayomiyori/WebHook_Manager/branch/main/graph/badge.svg)](https://codecov.io/gh/sayomiyori/WebHook_Manager)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
@@ -18,9 +25,9 @@ A production-oriented webhook platform built with **FastAPI**, **PostgreSQL (asy
   - Structured JSON logs via `structlog`
   - Prometheus metrics on `/metrics`
   - Health checks on `/health`, `/health/live`, `/health/ready`
-- **Production-ready CI/CD**
+- **CI/CD assets**
   - GitHub Actions pipeline (lint / tests / security)
-  - Docker image builds + VPS auto-deploy
+  - Docker image publication; VPS deployment is not automated by this workflow
 
 ## Screenshots
 

@@ -26,9 +26,16 @@ class DeliveryService:
         return await self._deliveries.get_by_id(delivery_id)
 
     async def get_delivery_history(
-        self, event_id: UUID, owner_id: UUID
+        self,
+        event_id: UUID,
+        owner_id: UUID,
+        *,
+        cursor: UUID | None = None,
+        limit: int = 100,
     ) -> list[DeliveryAttempt]:
-        attempts = await self._deliveries.get_by_event(event_id, cursor=None, limit=100)
+        attempts = await self._deliveries.get_by_event(
+            event_id, cursor=cursor, limit=limit
+        )
         for a in attempts:
             endpoint = await self._endpoints.get_by_id(a.endpoint_id)
             if endpoint is None:
@@ -102,4 +109,3 @@ class DeliveryService:
             attempted_at=retry_at,
         )
         await self._deliveries.create(next_attempt)
-

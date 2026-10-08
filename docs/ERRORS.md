@@ -1,5 +1,25 @@
 # Error log
 
+## 2026-10-09: Delivery success, pagination and subscriptions
+
+- Redis reset failure after a committed HTTP success entered the retry handler
+  and resent the webhook. Commit success and all later side effects outside the
+  delivery failure handler. Regressions cover RedisError and a late Celery soft
+  timeout followed by redelivery: one HTTP request, durable success preserved.
+- Delivery history silently discarded cursor/limit. Pass both to the repository.
+- Event matching only read the first 100 subscriptions. Traverse existing cursor
+  pages; a 205-subscription regression verifies the final page is included.
+- Use DELIVERY_TIMEOUT_SECONDS rather than a hardcoded HTTP timeout. Logs use
+  endpoint UUID, static exception classes and suppressed credential-bearing HTTP
+  transport logs instead of raw destination URLs/network exception text.
+- Full suite: 320 passed, coverage 85.02%; Ruff and strict Mypy passed. Independent
+  review approved. Legacy concurrent claims, ambiguous-send recovery and SSRF
+  restrictions remain separate work; this is not an exactly-once guarantee.
+- Tracked generated egg-info still advertised removed python-jose dependencies.
+  Stop tracking those already ignored build artifacts; refresh local editable
+  metadata and remove unused python-jose/ecdsa. `uv pip check`, pip-audit and a
+  repeated 320-test run pass. The current image already excluded these packages.
+
 ## 2026-10-03 — Test database escape and destructive cleanup
 
 Symptom: test bootstrap overwrote explicit DATABASE_URL with ordinary `.env`

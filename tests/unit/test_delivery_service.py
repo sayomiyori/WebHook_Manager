@@ -135,3 +135,18 @@ async def test_record_attempt_truncates_body() -> None:
     )
     assert updated.response_body is not None
     assert len(updated.response_body) == 1000
+
+
+@pytest.mark.asyncio
+async def test_history_forwards_cursor_and_limit() -> None:
+    from unittest.mock import AsyncMock
+
+    deliveries, endpoints = AsyncMock(), AsyncMock()
+    deliveries.get_by_event.return_value = []
+    service = DeliveryService(deliveries, endpoints)
+    event_id, owner_id, cursor = uuid4(), uuid4(), uuid4()
+    assert (
+        await service.get_delivery_history(event_id, owner_id, cursor=cursor, limit=2)
+        == []
+    )
+    deliveries.get_by_event.assert_awaited_once_with(event_id, cursor=cursor, limit=2)
