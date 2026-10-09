@@ -10,6 +10,8 @@ from uuid import UUID
 import httpx
 import redis
 import structlog
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 
 from src.core.config import settings
 from src.core.logging import suppress_platform_http_logging
@@ -25,6 +27,7 @@ from src.infrastructure.queue.celery_app import celery_app
 from src.infrastructure.queue.tasks.circuit_breaker import SyncCircuitBreaker
 
 log = structlog.get_logger()
+CIRCUIT_REDIS_TIMEOUT_SECONDS = 0.5
 
 
 @celery_app.task(  # type: ignore[untyped-decorator]
@@ -43,10 +46,17 @@ def deliver_webhook(
     suppress_platform_http_logging()
 
     # Celery worker runs in a sync context, so use sync Redis circuit breaker.
-    cb_redis = redis.Redis.from_url(str(settings.REDIS_URL), decode_responses=True)
-    cb = SyncCircuitBreaker(redis=cb_redis)
-
-    with sync_session_maker() as session:
+    with (
+        redis.Redis.from_url(
+            str(settings.REDIS_URL),
+            decode_responses=True,
+            socket_connect_timeout=CIRCUIT_REDIS_TIMEOUT_SECONDS,
+            socket_timeout=CIRCUIT_REDIS_TIMEOUT_SECONDS,
+            retry=Retry(NoBackoff(), 0),
+        ) as cb_redis,
+        sync_session_maker() as session,
+    ):
+        cb = SyncCircuitBreaker(redis=cb_redis)
         delivery = session.get(DeliveryAttemptModel, delivery_uuid)
         if delivery is None:
             return {"status": "failed", "response_code": None}
@@ -73,9 +83,17 @@ def deliver_webhook(
             return {"status": "failed", "response_code": None}
 
         # Circuit breaker: short-circuit very unhealthy endpoint.
-        if endpoint.failure_count >= 10 or cb.is_open(
-            endpoint_id=endpoint_id, threshold=10
-        ):
+        circuit_open = endpoint.failure_count >= 10
+        if not circuit_open:
+            try:
+                circuit_open = cb.is_open(endpoint_id=endpoint_id, threshold=10)
+            except redis.RedisError:
+                log.warning(
+                    "delivery_circuit_unavailable",
+                    endpoint_id=endpoint_id,
+                    operation="read",
+                )
+        if circuit_open:
             delivery.status = DeliveryStatus.EXHAUSTED
             delivery.error_message = "Circuit breaker open"
             delivery.updated_at = datetime.now(UTC)
@@ -128,7 +146,19 @@ def deliver_webhook(
             delivery.error_message = type(exc).__name__
             delivery.updated_at = endpoint.updated_at
 
-            cb_count = cb.record_failure(endpoint_id=endpoint_id, ttl_seconds=600)
+            # The persisted counter remains authoritative when Redis is unavailable.
+            cb_count = endpoint.failure_count
+            try:
+                cb_count = max(
+                    cb_count,
+                    cb.record_failure(endpoint_id=endpoint_id, ttl_seconds=600),
+                )
+            except redis.RedisError:
+                log.warning(
+                    "delivery_circuit_unavailable",
+                    endpoint_id=endpoint_id,
+                    operation="record_failure",
+                )
             is_final_attempt = attempt_no >= settings.MAX_DELIVERY_ATTEMPTS
             should_exhaust = is_final_attempt or cb_count >= 10
             if should_exhaust:

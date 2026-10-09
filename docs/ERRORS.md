@@ -1,5 +1,30 @@
 # Error log
 
+## 2026-10-09: Circuit-breaker Redis outage
+
+Redis GET/INCR/EXPIRE errors escaped the legacy task before the failure outcome
+was committed. The client also had no explicit socket timeout and was not closed
+on early returns. Five new regression cases failed before the fix.
+
+The task now bounds socket/connect waits to 0.5 seconds, disables Redis transport
+retries and closes the client through a context manager. On RedisError, the
+existing PostgreSQL counter still governs the endpoint threshold. A returned
+Redis count cannot lower that counter; a DB count of 9 stops the next failure
+without an extra retry, and 10 prevents HTTP entirely. Error logs contain only
+endpoint UUID and a static operation name.
+
+Final full suite: 326 passed, 85.24% coverage; Ruff and strict Mypy (118 files)
+passed. Independent adversarial/security review approved; 11 worker tests passed
+again. An in-memory mutation removing max(DB, Redis) failed the strengthened
+threshold regression. A real local TCP server accepting but not answering Redis
+traffic produced TimeoutError in 0.519 seconds with one connection.
+
+Commands: `python -m pytest tests/ --cov=src --cov-report=term --cov-fail-under=80`,
+`python -m ruff check src/ tests/ scripts/ alembic/`, `python -m mypy src/ --strict`.
+No schema or API changes. Socket timeout is not a total deadline across all
+Redis operations. Broker publication failure, concurrent claims, ambiguous
+HTTP outcomes and SSRF policy remain separate work.
+
 ## 2026-10-09: Delivery success, pagination and subscriptions
 
 - Redis reset failure after a committed HTTP success entered the retry handler

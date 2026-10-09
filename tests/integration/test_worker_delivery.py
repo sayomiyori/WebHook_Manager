@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+import redis
 import respx
 from httpx import ConnectTimeout, Response
 from sqlalchemy.orm import sessionmaker
@@ -198,3 +200,78 @@ def test_worker_failures_exhaust_and_count_attempts(worker_delivery, failure):
             == DeliveryStatus.EXHAUSTED
         )
         assert session.get(EndpointModel, endpoint_id).failure_count == 5
+
+
+@pytest.mark.parametrize(
+    "operation,response_code,initial_failures,expected_calls",
+    [
+        ("get", 200, 0, 1),
+        ("incr", 500, 0, 5),
+        ("expire", 500, 0, 5),
+        ("get", 500, 9, 1),
+        ("get", 500, 10, 0),
+    ],
+)
+def test_redis_outage_preserves_durable_delivery_state(
+    worker_delivery,
+    monkeypatch,
+    operation,
+    response_code,
+    initial_failures,
+    expected_calls,
+):
+    factory, attempt_id, event_id, endpoint_id = worker_delivery
+    with factory() as session:
+        session.get(EndpointModel, endpoint_id).failure_count = initial_failures
+        session.commit()
+
+    def unavailable(*args, **kwargs):
+        raise redis.TimeoutError("synthetic circuit breaker outage")
+
+    monkeypatch.setattr(redis.Redis, operation, unavailable)
+    if initial_failures >= 9:
+        retry = Mock(side_effect=AssertionError("Durable threshold must stop retry"))
+        monkeypatch.setattr(task_module.deliver_webhook, "retry", retry)
+    with respx.mock as boundary:
+        request = boundary.post("https://receiver.worker/hook").mock(
+            return_value=Response(response_code)
+        )
+        result = task_module.deliver_webhook.apply(
+            args=[str(attempt_id), str(event_id), str(endpoint_id)], throw=False
+        )
+        assert result.successful()
+        assert request.call_count == expected_calls
+    if initial_failures >= 9:
+        retry.assert_not_called()
+    with factory() as session:
+        delivery = session.get(DeliveryAttemptModel, attempt_id)
+        endpoint = session.get(EndpointModel, endpoint_id)
+        assert delivery.status == (
+            DeliveryStatus.SUCCESS if response_code == 200 else DeliveryStatus.EXHAUSTED
+        )
+        assert endpoint.failure_count == (
+            0 if response_code == 200 else initial_failures + expected_calls
+        )
+
+
+def test_circuit_client_has_bounded_wait_and_is_closed(worker_delivery, monkeypatch):
+    original = redis.Redis.from_url
+    clients = []
+
+    def create_client(*args, **kwargs):
+        client = original(*args, **kwargs)
+        client.close = Mock(wraps=client.close)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(redis.Redis, "from_url", create_client)
+    result = task_module.deliver_webhook.apply(
+        args=[str(uuid4()), str(uuid4()), str(uuid4())], throw=True
+    )
+    assert result.result["status"] == "failed"
+    (client,) = clients
+    options = client.connection_pool.connection_kwargs
+    assert 0 < options["socket_connect_timeout"] <= 0.5
+    assert 0 < options["socket_timeout"] <= 0.5
+    assert options["retry"].get_retries() == 0
+    client.close.assert_called_once()

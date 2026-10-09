@@ -1,11 +1,15 @@
 # WebHook Manager
 
-Local verification on 2026-10-09: 320 tests passed, 85.02% coverage, Ruff and strict
+Local verification on 2026-10-09: 326 tests passed, 85.24% coverage, Ruff and strict
 Mypy passed. Delivery history respects cursor/limit and event matching traverses
 all subscription pages. `DELIVERY_TIMEOUT_SECONDS` controls legacy HTTP delivery.
 Late failures after a persisted success no longer cause a resend; this does not
 provide concurrent claims or exactly-once delivery. Legacy arbitrary destinations
 still require an egress policy before exposing management to untrusted callers.
+The legacy circuit-breaker Redis client has 0.5-second socket/connect timeouts
+and no transport retries. On Redis errors, the existing PostgreSQL failure count
+still enforces the endpoint threshold and delivery outcomes remain persistent.
+This does not recover tasks when the Celery broker itself is unavailable.
 
 [![CI](https://github.com/sayomiyori/WebHook_Manager/actions/workflows/ci.yml/badge.svg)](https://github.com/sayomiyori/WebHook_Manager/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/sayomiyori/WebHook_Manager/branch/main/graph/badge.svg)](https://codecov.io/gh/sayomiyori/WebHook_Manager)
