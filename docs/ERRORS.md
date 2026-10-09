@@ -1,5 +1,42 @@
 # Error log
 
+## 2026-10-09: Concurrent legacy delivery claims
+
+Two workers could read the same pending delivery and both send HTTP. A replay
+of a delivering row with inconsistent event/endpoint references could also
+overwrite that active claim as exhausted. Three regression tests failed before
+the correction, including two HTTP requests from simultaneous workers.
+
+Read the delivery with PostgreSQL `FOR UPDATE`, inspect its status while locked,
+then commit the existing delivering transition before HTTP. A delivering replay
+is a no-op. The lock is released at that commit; a concurrent duplicate during
+a blocked HTTP call returns promptly without a second send. No migration,
+dependency, HTTP payload or retry settings changed. Pending/failed/retrying
+delivery behavior and existing circuit/success regressions remain covered.
+
+Full suite: 329 passed in 32.17 seconds, 85.24% coverage; Ruff and strict Mypy
+(118 files) passed. The new concurrency tests use committed synthetic fixtures
+and independent PostgreSQL connections. The existing rollback fixture remains
+the default; committed fixtures clean only their uniquely identified test user
+and its cascading records in the explicitly configured isolated test database.
+
+Commands: `python -m pytest tests/integration/test_worker_delivery.py -q --tb=short`,
+`python -m pytest tests/ --cov=src --cov-report=term --cov-fail-under=80`,
+`python -m ruff check src/ tests/ scripts/ alembic/`,
+`python -m mypy src/ --strict`.
+
+A worker lost after the claim leaves delivering visible; automatic redelivery
+does not resend it. Operator reconciliation, ambiguous HTTP timeout handling,
+broker recovery, endpoint-wide concurrent failure counters and SSRF remain
+separate work. This prevents overlapping sends for one delivery row; it does
+not promise exactly-once effects at an external receiver.
+
+Independent adversarial/security review approved: 14 worker tests passed again
+in 16.36 seconds. In-memory mutations removing the delivering guard or row lock
+each failed their corresponding regression; the latter produced two HTTP calls.
+The rebuilt local API/worker passed root health/auth/upload/webhook smoke and
+Celery ping. The build reused the existing audited dependency base.
+
 ## 2026-10-09: Circuit-breaker Redis outage
 
 Redis GET/INCR/EXPIRE errors escaped the legacy task before the failure outcome

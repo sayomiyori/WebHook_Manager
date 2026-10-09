@@ -1,10 +1,14 @@
 # WebHook Manager
 
-Local verification on 2026-10-09: 326 tests passed, 85.24% coverage, Ruff and strict
+Local verification on 2026-10-09: 329 tests passed, 85.24% coverage, Ruff and strict
 Mypy passed. Delivery history respects cursor/limit and event matching traverses
 all subscription pages. `DELIVERY_TIMEOUT_SECONDS` controls legacy HTTP delivery.
-Late failures after a persisted success no longer cause a resend; this does not
-provide concurrent claims or exactly-once delivery. Legacy arbitrary destinations
+Late failures after a persisted success no longer cause a resend. PostgreSQL
+serializes claims for the same delivery; a task observing `delivering` returns
+without HTTP. The claim commits before HTTP, releasing the row lock. A worker
+lost after claiming leaves `delivering` visible and requires operator outcome
+reconciliation before any resend. This is not an exactly-once guarantee.
+Legacy arbitrary destinations
 still require an egress policy before exposing management to untrusted callers.
 The legacy circuit-breaker Redis client has 0.5-second socket/connect timeouts
 and no transport retries. On Redis errors, the existing PostgreSQL failure count

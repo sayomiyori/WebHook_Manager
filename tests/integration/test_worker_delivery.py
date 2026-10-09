@@ -1,4 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier, Event
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -6,7 +8,8 @@ import pytest
 import redis
 import respx
 from httpx import ConnectTimeout, Response
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import delete
+from sqlalchemy.orm import Session, sessionmaker
 
 from src.domain.enums import DeliveryStatus
 from src.infrastructure.db.base import sync_engine
@@ -21,7 +24,7 @@ from src.infrastructure.queue.tasks import deliver_webhook as task_module
 
 
 @pytest.fixture
-def worker_delivery(monkeypatch):
+def worker_delivery(monkeypatch, request):
     with sync_engine.connect() as connection:
         transaction = connection.begin()
         factory = sessionmaker(
@@ -29,6 +32,9 @@ def worker_delivery(monkeypatch):
             expire_on_commit=False,
             join_transaction_mode="create_savepoint",
         )
+        committed = getattr(request, "param", False)
+        if committed:
+            factory = sessionmaker(bind=sync_engine, expire_on_commit=False)
         monkeypatch.setattr(task_module, "sync_session_maker", factory)
         with factory() as session:
             now = datetime.now(UTC)
@@ -101,6 +107,12 @@ def worker_delivery(monkeypatch):
             try:
                 yield factory, attempt.id, event.id, endpoint.id
             finally:
+                if committed:
+                    with factory() as cleanup:
+                        cleanup.execute(
+                            delete(UserModel).where(UserModel.id == user.id)
+                        )
+                        cleanup.commit()
                 transaction.rollback()
 
 
@@ -275,3 +287,77 @@ def test_circuit_client_has_bounded_wait_and_is_closed(worker_delivery, monkeypa
     assert 0 < options["socket_timeout"] <= 0.5
     assert options["retry"].get_retries() == 0
     client.close.assert_called_once()
+
+
+@pytest.mark.parametrize("worker_delivery", [True], indirect=True)
+def test_concurrent_delivery_during_http_is_noop(worker_delivery):
+    factory, attempt_id, event_id, endpoint_id = worker_delivery
+    entered, release = Event(), Event()
+    args = [str(attempt_id), str(event_id), str(endpoint_id)]
+
+    def receiver(request):
+        entered.set()
+        assert release.wait(5), "Receiver was not released"
+        return Response(200)
+
+    with respx.mock as boundary, ThreadPoolExecutor(max_workers=2) as workers:
+        request = boundary.post("https://receiver.worker/hook").mock(
+            side_effect=receiver
+        )
+        first = workers.submit(task_module.deliver_webhook.run, *args)
+        try:
+            assert entered.wait(5), "First delivery did not reach HTTP"
+            duplicate = workers.submit(task_module.deliver_webhook.run, *args)
+            assert duplicate.result(timeout=2)["status"] == "delivering"
+        finally:
+            release.set()
+        assert first.result(timeout=5)["status"] == "success"
+        assert request.call_count == 1
+    with factory() as session:
+        assert (
+            session.get(DeliveryAttemptModel, attempt_id).status
+            == DeliveryStatus.SUCCESS
+        )
+
+
+@pytest.mark.parametrize("worker_delivery", [True], indirect=True)
+def test_concurrent_claim_serializes_before_http(worker_delivery, monkeypatch):
+    _, attempt_id, event_id, endpoint_id = worker_delivery
+    ready = Barrier(2, timeout=5)
+    original_get = Session.get
+
+    def simultaneous_get(session, entity, ident, **kwargs):
+        if entity is DeliveryAttemptModel:
+            ready.wait()
+        return original_get(session, entity, ident, **kwargs)
+
+    monkeypatch.setattr(Session, "get", simultaneous_get)
+    args = [str(attempt_id), str(event_id), str(endpoint_id)]
+    with respx.mock as boundary, ThreadPoolExecutor(max_workers=2) as workers:
+        request = boundary.post("https://receiver.worker/hook").mock(
+            return_value=Response(200)
+        )
+        calls = [
+            workers.submit(task_module.deliver_webhook.run, *args) for _ in range(2)
+        ]
+        results = [call.result(timeout=5) for call in calls]
+        assert all(result["status"] in ("success", "delivering") for result in results)
+        assert request.call_count == 1
+
+
+def test_delivering_replay_does_not_mutate_claim(worker_delivery):
+    factory, attempt_id, _, _ = worker_delivery
+    with factory() as session:
+        session.get(DeliveryAttemptModel, attempt_id).status = DeliveryStatus.DELIVERING
+        session.commit()
+    with respx.mock as boundary:
+        result = task_module.deliver_webhook.run(
+            str(attempt_id), str(uuid4()), str(uuid4())
+        )
+        assert result["status"] == "delivering"
+        assert not boundary.calls
+    with factory() as session:
+        assert (
+            session.get(DeliveryAttemptModel, attempt_id).status
+            == DeliveryStatus.DELIVERING
+        )

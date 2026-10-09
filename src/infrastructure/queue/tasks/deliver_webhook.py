@@ -57,12 +57,18 @@ def deliver_webhook(
         sync_session_maker() as session,
     ):
         cb = SyncCircuitBreaker(redis=cb_redis)
-        delivery = session.get(DeliveryAttemptModel, delivery_uuid)
+        delivery = session.get(
+            DeliveryAttemptModel, delivery_uuid, with_for_update=True
+        )
         if delivery is None:
             return {"status": "failed", "response_code": None}
 
-        # Idempotency: already finalized attempts are safe to return.
-        if delivery.status in (DeliveryStatus.SUCCESS, DeliveryStatus.EXHAUSTED):
+        # A committed claim may already have produced an external side effect.
+        if delivery.status in (
+            DeliveryStatus.SUCCESS,
+            DeliveryStatus.EXHAUSTED,
+            DeliveryStatus.DELIVERING,
+        ):
             return {
                 "status": str(delivery.status),
                 "response_code": delivery.response_code,
