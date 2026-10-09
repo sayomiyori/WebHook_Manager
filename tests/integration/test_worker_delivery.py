@@ -25,6 +25,7 @@ from src.infrastructure.queue.tasks import deliver_webhook as task_module
 
 @pytest.fixture
 def worker_delivery(monkeypatch, request):
+    monkeypatch.setattr(task_module, "enqueue_delivery", Mock(return_value="queued"))
     with sync_engine.connect() as connection:
         transaction = connection.begin()
         factory = sessionmaker(
@@ -99,6 +100,8 @@ def worker_delivery(monkeypatch, request):
                 attempt_number=1,
                 status=DeliveryStatus.PENDING,
                 attempted_at=now,
+                next_attempt_at=now,
+                next_dispatch_at=now,
                 created_at=now,
                 updated_at=now,
             )
@@ -201,9 +204,15 @@ def test_worker_failures_exhaust_and_count_attempts(worker_delivery, failure):
             request.mock(return_value=Response(failure))
         else:
             request.mock(side_effect=failure)
-        result = task_module.deliver_webhook.apply(
-            args=[str(attempt_id), str(event_id), str(endpoint_id)], throw=False
-        )
+        for _ in range(5):
+            with factory() as session:
+                session.get(
+                    DeliveryAttemptModel, attempt_id
+                ).next_attempt_at = datetime.now(UTC)
+                session.commit()
+            result = task_module.deliver_webhook.apply(
+                args=[str(attempt_id), str(event_id), str(endpoint_id)], throw=False
+            )
         assert result.result["status"] == "failed"
         assert request.call_count == 5
     with factory() as session:
@@ -243,14 +252,20 @@ def test_redis_outage_preserves_durable_delivery_state(
     monkeypatch.setattr(redis.Redis, operation, unavailable)
     if initial_failures >= 9:
         retry = Mock(side_effect=AssertionError("Durable threshold must stop retry"))
-        monkeypatch.setattr(task_module.deliver_webhook, "retry", retry)
+        monkeypatch.setattr(task_module, "enqueue_delivery", retry)
     with respx.mock as boundary:
         request = boundary.post("https://receiver.worker/hook").mock(
             return_value=Response(response_code)
         )
-        result = task_module.deliver_webhook.apply(
-            args=[str(attempt_id), str(event_id), str(endpoint_id)], throw=False
-        )
+        for _ in range(max(expected_calls, 1)):
+            with factory() as session:
+                session.get(
+                    DeliveryAttemptModel, attempt_id
+                ).next_attempt_at = datetime.now(UTC)
+                session.commit()
+            result = task_module.deliver_webhook.apply(
+                args=[str(attempt_id), str(event_id), str(endpoint_id)], throw=False
+            )
         assert result.successful()
         assert request.call_count == expected_calls
     if initial_failures >= 9:

@@ -27,14 +27,14 @@ from src.infrastructure.db.repositories.subscription_repository import (
     PostgresSubscriptionRepository,
 )
 from src.infrastructure.db.repositories.user_repository import PostgresUserRepository
-from src.infrastructure.queue.tasks.deliver_webhook import deliver_webhook
+from src.infrastructure.queue import dispatcher
 from src.services.auth_service import AuthService
 
 
 @pytest.mark.asyncio
 async def test_full_delivery_flow(client, db_session, monkeypatch) -> None:
-    queued = Mock(return_value=Mock(id="queued-test-task"))
-    monkeypatch.setattr(deliver_webhook, "delay", queued)
+    queued = Mock(return_value="queued-test-task")
+    monkeypatch.setattr(dispatcher, "enqueue_delivery", queued)
     now = datetime.now(UTC)
 
     user = await PostgresUserRepository(db_session).create(
@@ -130,8 +130,8 @@ async def test_full_delivery_flow(client, db_session, monkeypatch) -> None:
 async def test_dispatch_persists_pending_delivery(
     client, db_session, monkeypatch
 ) -> None:
-    queued = Mock(return_value=Mock(id="queued-test-task"))
-    monkeypatch.setattr(deliver_webhook, "delay", queued)
+    queued = Mock(return_value="queued-test-task")
+    monkeypatch.setattr(dispatcher, "enqueue_delivery", queued)
     now = datetime.now(UTC)
 
     user = await PostgresUserRepository(db_session).create(

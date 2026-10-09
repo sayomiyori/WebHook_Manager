@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from src.domain.entities.delivery import DeliveryAttempt
+from src.domain.enums import DeliveryStatus
 from src.domain.interfaces.repositories import DeliveryAttemptRepository
 from src.infrastructure.db.mappers import (
     delivery_attempt_to_entity,
@@ -38,6 +41,9 @@ class PostgresDeliveryAttemptRepository(DeliveryAttemptRepository):
 
     async def create(self, attempt: DeliveryAttempt) -> DeliveryAttempt:
         model = delivery_attempt_to_model(attempt)
+        if attempt.status in (DeliveryStatus.PENDING, DeliveryStatus.RETRYING):
+            model.next_attempt_at = attempt.attempted_at
+            model.next_dispatch_at = attempt.attempted_at
         self._session.add(model)
         await self._session.commit()
         await self._session.refresh(model)
@@ -56,3 +62,28 @@ class PostgresDeliveryAttemptRepository(DeliveryAttemptRepository):
         )
         await self._session.commit()
 
+
+def claim_due_deliveries(
+    session: Session, batch_size: int = 100
+) -> list[tuple[UUID, UUID, UUID]]:
+    if not 1 <= batch_size <= 100:
+        raise ValueError("Invalid scanner batch size")
+    now = session.execute(select(func.clock_timestamp())).scalar_one()
+    rows = session.scalars(
+        select(DeliveryAttemptModel)
+        .where(
+            DeliveryAttemptModel.status.in_(
+                (DeliveryStatus.PENDING, DeliveryStatus.FAILED, DeliveryStatus.RETRYING)
+            ),
+            DeliveryAttemptModel.next_attempt_at <= now,
+            DeliveryAttemptModel.next_dispatch_at <= now,
+        )
+        .order_by(DeliveryAttemptModel.next_dispatch_at, DeliveryAttemptModel.id)
+        .limit(batch_size)
+        .with_for_update(skip_locked=True)
+    ).all()
+    for row in rows:
+        # A lost publication or scanner recovers after this notification lease.
+        row.next_dispatch_at = now + timedelta(seconds=60)
+    session.flush()
+    return [(row.id, row.event_id, row.endpoint_id) for row in rows]

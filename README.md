@@ -1,6 +1,6 @@
 # WebHook Manager
 
-Local verification on 2026-10-09: 329 tests passed, 85.24% coverage, Ruff and strict
+Local verification on 2026-10-09: 347 tests passed, 85.78% coverage, Ruff and strict
 Mypy passed. Delivery history respects cursor/limit and event matching traverses
 all subscription pages. `DELIVERY_TIMEOUT_SECONDS` controls legacy HTTP delivery.
 Late failures after a persisted success no longer cause a resend. PostgreSQL
@@ -13,7 +13,49 @@ still require an egress policy before exposing management to untrusted callers.
 The legacy circuit-breaker Redis client has 0.5-second socket/connect timeouts
 and no transport retries. On Redis errors, the existing PostgreSQL failure count
 still enforces the endpoint threshold and delivery outcomes remain persistent.
-This does not recover tasks when the Celery broker itself is unavailable.
+Legacy publication and retry intents are now durable in PostgreSQL. Run the
+independent scanner below to recover broker outages and lost notifications.
+
+## Legacy delivery recovery
+
+Stop old API/worker processes before upgrading; do not mix old workers with the
+new scanner. Apply `python -m alembic upgrade head` (revision `6e2f8a1c9b04`), then
+start the API, existing Celery worker and a separately supervised scanner:
+
+```bash
+celery -A src.infrastructure.queue.celery_app:celery_app worker --loglevel=info
+python -m scripts.recover_legacy_deliveries
+# A single bounded recovery pass:
+python -m scripts.recover_legacy_deliveries --once
+```
+
+Use the same `DATABASE_URL` and `CELERY_BROKER_URL` as the API/worker. No new
+settings or dependencies are required. The scanner is required for recovery;
+Celery beat cannot recover publications while the broker is down. It scans every
+five seconds, claims at most 100 due pending/failed/retrying rows using
+`FOR UPDATE SKIP LOCKED`, commits a 60-second notification lease, and stops the
+batch at the first broker error. Unpublished remainder and lost scanner work
+become eligible after the lease expires. Socket/connect waits are two seconds
+with publication retries disabled; these are per-operation limits, not a total
+network deadline. Concurrent scanners are safe; avoid running unnecessary copies.
+
+The worker persists the next HTTP attempt and due time before a best-effort
+countdown notification. HTTP backoff remains 10/30/120/600/3600 seconds, bounded
+by `MAX_DELIVERY_ATTEMPTS`. An early duplicate cannot skip the durable due time.
+The existing manual retry route persists a separate retrying row with its
+existing 5/15/60/300/900 schedule; the scanner now executes that intent when due.
+Broker failures and repeated scans consume no HTTP attempts. A Celery task may
+complete with a failed delivery result while its durable retry is still pending;
+read PostgreSQL delivery state rather than Celery retry metadata for outcomes.
+
+Monitor scanner warnings `delivery_broker_unavailable` and
+`delivery_recovery_unavailable`, overdue `next_dispatch_at`/`next_attempt_at`,
+and delivering records requiring reconciliation. Success, exhausted and
+delivering records are never scanned. Recovery only covers persisted delivery
+intents; a process lost before background dispatch creates them is a separate
+boundary. Arbitrary receivers remain at-least-once, without exactly-once effects.
+The root local runtime is not upgraded by this source change; its schema/image
+and scanner must be rolled out together after a separate local rehearsal.
 
 [![CI](https://github.com/sayomiyori/WebHook_Manager/actions/workflows/ci.yml/badge.svg)](https://github.com/sayomiyori/WebHook_Manager/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/sayomiyori/WebHook_Manager/branch/main/graph/badge.svg)](https://codecov.io/gh/sayomiyori/WebHook_Manager)

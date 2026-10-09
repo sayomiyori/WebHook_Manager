@@ -1,5 +1,60 @@
 # Error log
 
+## 2026-10-09: Lost legacy broker publications and retries
+
+The dispatcher committed a pending delivery before publishing. Broker failure
+escaped the loop, stranding that row and skipping remaining subscriptions.
+The worker committed failed/next-attempt state before Celery retry publication;
+that publication could also fail. Manual retry created a retrying row without
+any publisher. Two regression tests reproduced the publication exceptions.
+
+Forward migration `6e2f8a1c9b04` adds separate internal HTTP and notification due
+times. Repository creation persists initial/manual schedules; confirmed worker
+failure persists the next attempt and existing backoff before bounded best-effort
+publication. PostgreSQL attempt state now governs retries; Celery retry metadata
+does not. Early notifications cannot bypass the HTTP due time. Initial broker
+failure is logged safely and does not stop later intents from being persisted.
+
+Run `python -m scripts.recover_legacy_deliveries` independently of broker/beat.
+It claims at most 100 due rows with `FOR UPDATE SKIP LOCKED`, commits a 60-second
+notification lease before publication, stops on broker failure and scans every
+five seconds. Expired leases recover lost publications/scanner crashes; scans
+do not consume HTTP attempts. Success/exhausted/delivering rows are excluded.
+Monitor static scanner warnings, overdue schedules and unresolved delivering
+claims. Socket/connect timeouts are two seconds with transport publication retry
+disabled; DNS and cumulative operations do not have a total two-second deadline.
+
+Final full suite: 347 passed in 40.67 seconds, 85.78% coverage; Ruff and strict
+Mypy (119 files) passed. Tests cover real PostgreSQL scanner concurrency and
+locked-row skipping, publication loss/lease replay, bounded batch progress,
+manual retry execution, early notifications, terminal preservation and attempt
+exhaustion. Real refused-broker publication stays bounded; an independent TCP
+blackhole probe failed in 2.056 seconds with exactly one accepted connection.
+Dependency audit found no known advisories; Bandit medium/high scan passed.
+
+Fresh review also reproduced synchronous broker publication blocking the API
+event loop. The new deterministic regression failed before moving the publisher
+to `asyncio.to_thread`; the thread receives UUID strings, never the async session.
+An independent three-subscription blackhole probe reduced a 50 ms timer's delay
+from 2.061 seconds to 65 ms while preserving every intent. The rebuilt image's
+complete isolated outage recovery chain passed again after the correction.
+Final independent adversarial/security verdict: APPROVE; isolated coverage run
+347 passed in 40.34 seconds, 85.78%, with Ruff/Mypy and Alembic head/check passed.
+
+Commands: `python -m pytest tests/integration/test_delivery_recovery.py
+tests/integration/test_worker_delivery.py tests/e2e/test_webhook_flow.py -q --tb=short`,
+`python -m pytest tests/ --cov=src --cov-report=term --cov-fail-under=80`,
+`python -m ruff check src/ tests/ scripts/ alembic/`, `python -m mypy src/ --strict`.
+Isolated migration upgrade/down/up preserved ten synthetic legacy records,
+payloads/statuses/attempt numbers and correct due times; `alembic check` passed.
+
+Stop old processes before migrating and deploy new API/worker/scanner together.
+Old workers cannot write durable retry schedules. Root runtime rollout remains
+separate. A lost process before background dispatch creates any delivery intent,
+interrupted delivering claims, ambiguous HTTP effects, endpoint-wide counters
+and SSRF policy remain outside this increment. Never automatically resend
+delivering records or claim exactly-once effects at arbitrary receivers.
+
 ## 2026-10-09: Concurrent legacy delivery claims
 
 Two workers could read the same pending delivery and both send HTTP. A replay

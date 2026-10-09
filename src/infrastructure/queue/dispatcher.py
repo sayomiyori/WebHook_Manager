@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import uuid4
+
+import structlog
 
 from src.domain.entities.delivery import DeliveryAttempt
 from src.domain.entities.subscription import Subscription
@@ -11,7 +14,9 @@ from src.infrastructure.db.base import async_session_maker
 from src.infrastructure.db.repositories.delivery_attempt_repository import (
     PostgresDeliveryAttemptRepository,
 )
-from src.infrastructure.queue.tasks.deliver_webhook import deliver_webhook
+from src.infrastructure.queue.delivery_publication import enqueue_delivery
+
+log = structlog.get_logger()
 
 
 async def dispatch_event_deliveries(
@@ -39,12 +44,13 @@ async def dispatch_event_deliveries(
                 attempted_at=now,
             )
             saved = await repo.create(attempt)
-            async_result = deliver_webhook.delay(
-                str(saved.id),
-                str(event.id),
-                str(sub.endpoint_id),
-            )
-            if async_result.id is not None:
-                task_ids.append(async_result.id)
+            try:
+                task_id = await asyncio.to_thread(
+                    enqueue_delivery, str(saved.id), str(event.id), str(sub.endpoint_id)
+                )
+            except Exception:
+                log.warning("delivery_broker_unavailable", delivery_id=str(saved.id))
+                continue
+            if task_id is not None:
+                task_ids.append(task_id)
     return task_ids
-

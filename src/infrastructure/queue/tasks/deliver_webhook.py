@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -24,6 +24,7 @@ from src.infrastructure.db.models.endpoint import EndpointModel
 from src.infrastructure.db.models.webhook_event import WebhookEventModel
 from src.infrastructure.queue.backoff import get_backoff_delay
 from src.infrastructure.queue.celery_app import celery_app
+from src.infrastructure.queue.delivery_publication import enqueue_delivery
 from src.infrastructure.queue.tasks.circuit_breaker import SyncCircuitBreaker
 
 log = structlog.get_logger()
@@ -74,6 +75,15 @@ def deliver_webhook(
                 "response_code": delivery.response_code,
             }
 
+        if (
+            delivery.next_attempt_at is not None
+            and delivery.next_attempt_at > datetime.now(UTC)
+        ):
+            return {
+                "status": str(delivery.status),
+                "response_code": delivery.response_code,
+            }
+
         event = session.get(WebhookEventModel, event_uuid)
         endpoint = session.get(EndpointModel, endpoint_uuid)
         if (
@@ -111,6 +121,8 @@ def deliver_webhook(
         delivery.status = DeliveryStatus.DELIVERING
         delivery.attempted_at = datetime.now(UTC)
         delivery.updated_at = delivery.attempted_at
+        delivery.next_attempt_at = None
+        delivery.next_dispatch_at = None
         session.commit()
 
         payload_text = json.dumps(
@@ -172,6 +184,11 @@ def deliver_webhook(
                 deliveries_total.labels(status="exhausted").inc()
             else:
                 delivery.attempt_number = attempt_no + 1
+                delay = get_backoff_delay(max(attempt_no - 1, 0))
+                delivery.next_attempt_at = delivery.updated_at + timedelta(
+                    seconds=delay
+                )
+                delivery.next_dispatch_at = delivery.next_attempt_at
 
             session.commit()
 
@@ -191,10 +208,11 @@ def deliver_webhook(
             if should_exhaust:
                 return {"status": "failed", "response_code": delivery.response_code}
 
-            delay = get_backoff_delay(max(attempt_no - 1, 0))
-            raise self.retry(
-                countdown=delay, exc=RuntimeError("Webhook delivery failed")
-            ) from None
+            try:
+                enqueue_delivery(delivery_id, event_id, endpoint_id, countdown=delay)
+            except Exception:
+                log.warning("delivery_broker_unavailable", delivery_id=delivery_id)
+            return {"status": "failed", "response_code": delivery.response_code}
 
         delivery.status = DeliveryStatus.SUCCESS
         delivery.error_message = None
