@@ -1,6 +1,7 @@
 from src.infrastructure.db.models.api_key import ApiKeyModel
 from src.infrastructure.db.models.delivery_attempt import DeliveryAttemptModel
 from src.infrastructure.db.models.endpoint import EndpointModel
+from src.infrastructure.db.models.legacy_rate_limit import LegacyRateLimitModel
 from src.infrastructure.db.models.platform_ingress_outbox import (
     PlatformIngressOutboxModel,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "ApiKeyModel",
     "DeliveryAttemptModel",
     "EndpointModel",
+    "LegacyRateLimitModel",
     "SourceModel",
     "SubscriptionModel",
     "TelegramBotModel",

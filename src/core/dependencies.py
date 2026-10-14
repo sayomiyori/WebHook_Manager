@@ -6,7 +6,6 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infrastructure.cache.rate_limiter import RateLimiter
-from src.infrastructure.cache.redis_client import get_redis
 from src.infrastructure.db.base import get_db_session
 from src.infrastructure.db.repositories.api_key_repository import (
     PostgresApiKeyRepository,
@@ -115,5 +114,5 @@ def get_auth_service(
 
 
 def get_rate_limiter() -> RateLimiter:
-    return RateLimiter(get_redis())
+    return RateLimiter()
 

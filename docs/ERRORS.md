@@ -258,3 +258,22 @@ Claims now lock and check the canonical bot before claiming the answer; inactive
 records become cancelled without consuming an attempt. Bot-before-answer lock
 order matches admission and send-start. Fresh issuer/bot checks still run before
 the committed external-effect marker.
+
+## 2026-10-14 - Legacy admission failed before persistence without Redis
+
+A stopped isolated broker reproduced Redis ConnectionError from
+rate_limit_ingest -> RateLimiter.allow before the signed webhook was persisted.
+The durable delivery scanner could not recover an event that was never admitted.
+
+Legacy ingest/read quotas now use a shared PostgreSQL sliding window, with row
+locking, database time, independently committed rejected-request accounting and
+bounded timestamp storage/expired-key reclamation. Migration c42d8e91a730 adds
+only the quota table after published 6e2f8a1c9b04. Platform registration still uses
+its existing fail-closed Redis limiter; HMAC and owner checks are unchanged.
+
+Fresh-database migration up/down/up/check, real concurrent quotas and full tests
+passed. Isolated HTTP smoke admitted/deduplicated while Redis was stopped,
+rejected bad signatures/API-key access and exhausted quota, preserved quota when
+Redis returned, then recovered exactly two callbacks through the permanent
+scanner. Main data, container definitions, uploads and WSL hashes were unchanged.
+See docs/legacy-admission-without-redis.md for commands and deployment boundary.
