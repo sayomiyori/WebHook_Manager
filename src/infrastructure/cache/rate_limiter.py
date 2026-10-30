@@ -11,7 +11,14 @@ from src.infrastructure.db.models.legacy_rate_limit import LegacyRateLimitModel
 
 
 class RateLimiter:
-    async def allow(self, *, key: str, limit: int, window_seconds: int = 60) -> bool:
+    async def allow(
+        self,
+        *,
+        key: str,
+        limit: int,
+        window_seconds: int = 60,
+        count_denied: bool = True,
+    ) -> bool:
         if limit <= 0:
             return False
         if window_seconds <= 0:
@@ -51,6 +58,8 @@ class RateLimiter:
             start = now - timedelta(seconds=window_seconds)
             timestamps = [stamp for stamp in row.timestamps if stamp > start]
             allowed = len(timestamps) < limit
-            row.timestamps = (timestamps + [now])[-(limit + 1) :]
+            if allowed or count_denied:
+                timestamps.append(now)
+            row.timestamps = timestamps[-(limit + 1) :]
             row.expires_at = now + timedelta(seconds=window_seconds)
         return allowed

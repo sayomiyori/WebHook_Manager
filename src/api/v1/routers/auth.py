@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from starlette.responses import Response
 
 from src.api.v1.dependencies.auth import get_current_user
+from src.api.v1.dependencies.rate_limit import rate_limit_auth
 from src.api.v1.schemas.auth import (
     ApiKeyCreateRequest,
     ApiKeyCreateResponse,
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 async def register(
     body: RegisterRequest,
     auth: AuthService = Depends(get_auth_service),  # noqa: B008
+    _: None = Depends(rate_limit_auth),  # noqa: B008
 ) -> RegisterResponse:
     user = await auth.register_user(body.email, body.password)
     return RegisterResponse(user_id=user.id)
@@ -43,6 +45,7 @@ async def register(
 async def login(
     body: LoginRequest,
     auth: AuthService = Depends(get_auth_service),  # noqa: B008
+    _: None = Depends(rate_limit_auth),  # noqa: B008
 ) -> LoginResponse:
     user = await auth.login_user(body.email, body.password)
     if user is None:
