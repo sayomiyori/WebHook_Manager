@@ -47,6 +47,15 @@ class DeliveryAttemptModel(Base):
     attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     next_dispatch_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retried_from_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("delivery_attempts.id", ondelete="SET NULL"),
+        unique=True,
+    )
+    resolved_by: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution: Mapped[str | None] = mapped_column(String(32))
+    resolution_reference: Mapped[str | None] = mapped_column(String(128))
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
@@ -63,4 +72,3 @@ class DeliveryAttemptModel(Base):
         Index("ix_delivery_attempts_dispatch_due", "status", "next_dispatch_at"),
         Index("ix_delivery_attempts_created_at_desc", created_at.desc()),
     )
-

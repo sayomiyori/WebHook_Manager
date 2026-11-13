@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import time
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
@@ -14,6 +15,7 @@ from redis.backoff import NoBackoff
 from redis.retry import Retry
 
 from src.core.config import settings
+from src.core.egress import UnsafeDestination, pin_destination
 from src.core.logging import suppress_platform_http_logging
 from src.core.metrics import deliveries_total, delivery_duration_seconds
 from src.core.security import hmac_sha256_hex, sanitize_webhook_headers
@@ -29,6 +31,10 @@ from src.infrastructure.queue.tasks.circuit_breaker import SyncCircuitBreaker
 
 log = structlog.get_logger()
 CIRCUIT_REDIS_TIMEOUT_SECONDS = 0.5
+
+
+class DeliveryRejected(Exception):
+    pass
 
 
 @celery_app.task(  # type: ignore[untyped-decorator]
@@ -100,15 +106,12 @@ def deliver_webhook(
 
         # Circuit breaker: short-circuit very unhealthy endpoint.
         circuit_open = endpoint.failure_count >= 10
-        if not circuit_open:
-            try:
-                circuit_open = cb.is_open(endpoint_id=endpoint_id, threshold=10)
-            except redis.RedisError:
-                log.warning(
-                    "delivery_circuit_unavailable",
-                    endpoint_id=endpoint_id,
-                    operation="read",
-                )
+        if not endpoint.is_active:
+            delivery.status = DeliveryStatus.EXHAUSTED
+            delivery.error_message = "Endpoint inactive"
+            delivery.updated_at = datetime.now(UTC)
+            session.commit()
+            return {"status": "exhausted", "response_code": None}
         if circuit_open:
             delivery.status = DeliveryStatus.EXHAUSTED
             delivery.error_message = "Circuit breaker open"
@@ -120,9 +123,13 @@ def deliver_webhook(
         delivery.attempt_number = attempt_no
         delivery.status = DeliveryStatus.DELIVERING
         delivery.attempted_at = datetime.now(UTC)
+        claim_time = delivery.attempted_at
         delivery.updated_at = delivery.attempted_at
         delivery.next_attempt_at = None
         delivery.next_dispatch_at = None
+        delivery.response_code = None
+        delivery.response_body = None
+        delivery.error_message = None
         session.commit()
 
         payload_text = json.dumps(
@@ -134,6 +141,7 @@ def deliver_webhook(
         headers = sanitize_webhook_headers(event.headers)
         headers.setdefault("Content-Type", "application/json")
         headers["X-Webhook-ID"] = str(event.id)
+        headers["X-Delivery-ID"] = str(delivery.id)
         if endpoint.secret:
             signature = hmac_sha256_hex(
                 secret=endpoint.secret,
@@ -142,22 +150,89 @@ def deliver_webhook(
             headers["X-Webhook-Signature"] = f"sha256={signature}"
 
         started = time.perf_counter()
+        response_code = None
+        body_text = ""
         try:
-            with httpx.Client(timeout=settings.DELIVERY_TIMEOUT_SECONDS) as client:
-                resp = client.post(
-                    endpoint.url,
+            pinned_url, original_host, sni_hostname = pin_destination(
+                endpoint.url, settings.DELIVERY_TRUSTED_ORIGINS
+            )
+            headers["Host"] = original_host
+            with httpx.Client(
+                timeout=settings.DELIVERY_TIMEOUT_SECONDS,
+                trust_env=False,
+                follow_redirects=False,
+            ) as client:
+                with client.stream(
+                    "POST",
+                    pinned_url,
                     content=payload_bytes,
                     headers=headers,
-                )
+                    extensions={"sni_hostname": sni_hostname},
+                ) as resp:
+                    response_code = resp.status_code
+                    try:
+                        if (
+                            resp.headers.get("Content-Encoding", "identity").lower()
+                            != "identity"
+                        ):
+                            preview = b""
+                        elif resp.is_stream_consumed:
+                            preview = resp.content[:1000]
+                        else:
+                            preview = next(resp.iter_raw(chunk_size=1000), b"")
+                    except httpx.HTTPError:
+                        preview = b""
             duration_ms = int((time.perf_counter() - started) * 1000)
-            delivery.response_code = resp.status_code
-            body_text = resp.text
+            session.refresh(delivery, with_for_update=True)
+            if (
+                delivery.status != DeliveryStatus.DELIVERING
+                or delivery.attempted_at != claim_time
+            ):
+                return {
+                    "status": str(delivery.status),
+                    "response_code": delivery.response_code,
+                }
+            delivery.response_code = response_code
+            body_text = preview.decode("utf-8", errors="replace")
             delivery.response_body = body_text[:1000] if body_text else None
 
-            if not 200 <= resp.status_code < 300:
-                raise RuntimeError(f"Non-2xx response: {resp.status_code}")
+            if not 200 <= response_code < 300:
+                raise DeliveryRejected("Non-2xx response")
         except Exception as exc:  # noqa: BLE001
             duration_ms = int((time.perf_counter() - started) * 1000)
+            session.refresh(delivery, with_for_update=True)
+            if (
+                delivery.status != DeliveryStatus.DELIVERING
+                or delivery.attempted_at != claim_time
+            ):
+                return {
+                    "status": str(delivery.status),
+                    "response_code": delivery.response_code,
+                }
+            if isinstance(exc, UnsafeDestination):
+                delivery.status = DeliveryStatus.EXHAUSTED
+                delivery.error_message = "Unsafe destination"
+                delivery.updated_at = datetime.now(UTC)
+                session.commit()
+                return {"status": "exhausted", "response_code": None}
+            if isinstance(exc, DeliveryRejected):
+                delivery.response_code = response_code
+                delivery.response_body = body_text[:1000] or None
+            if not isinstance(
+                exc,
+                (
+                    DeliveryRejected,
+                    httpx.ConnectError,
+                    httpx.ConnectTimeout,
+                    httpx.PoolTimeout,
+                    socket.gaierror,
+                ),
+            ):
+                delivery.error_message = "Ambiguous transport outcome"
+                delivery.updated_at = datetime.now(UTC)
+                session.commit()
+                return {"status": "delivering", "response_code": delivery.response_code}
+            session.refresh(endpoint, with_for_update=True)
             endpoint.failure_count += 1
             endpoint.updated_at = datetime.now(UTC)
             delivery.status = DeliveryStatus.FAILED
@@ -165,20 +240,8 @@ def deliver_webhook(
             delivery.updated_at = endpoint.updated_at
 
             # The persisted counter remains authoritative when Redis is unavailable.
-            cb_count = endpoint.failure_count
-            try:
-                cb_count = max(
-                    cb_count,
-                    cb.record_failure(endpoint_id=endpoint_id, ttl_seconds=600),
-                )
-            except redis.RedisError:
-                log.warning(
-                    "delivery_circuit_unavailable",
-                    endpoint_id=endpoint_id,
-                    operation="record_failure",
-                )
             is_final_attempt = attempt_no >= settings.MAX_DELIVERY_ATTEMPTS
-            should_exhaust = is_final_attempt or cb_count >= 10
+            should_exhaust = is_final_attempt or endpoint.failure_count >= 10
             if should_exhaust:
                 delivery.status = DeliveryStatus.EXHAUSTED
                 deliveries_total.labels(status="exhausted").inc()
@@ -191,6 +254,16 @@ def deliver_webhook(
                 delivery.next_dispatch_at = delivery.next_attempt_at
 
             session.commit()
+
+            # Advisory cache I/O cannot hold the durable delivery/endpoint locks.
+            try:
+                cb.record_failure(endpoint_id=endpoint_id, ttl_seconds=600)
+            except redis.RedisError:
+                log.warning(
+                    "delivery_circuit_unavailable",
+                    endpoint_id=endpoint_id,
+                    operation="record_failure",
+                )
 
             if not should_exhaust:
                 deliveries_total.labels(status="failed").inc()
@@ -217,6 +290,7 @@ def deliver_webhook(
         delivery.status = DeliveryStatus.SUCCESS
         delivery.error_message = None
         delivery.updated_at = datetime.now(UTC)
+        session.refresh(endpoint, with_for_update=True)
         endpoint.failure_count = 0
         endpoint.updated_at = delivery.updated_at
         session.commit()

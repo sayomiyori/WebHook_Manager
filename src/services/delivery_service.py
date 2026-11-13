@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from src.core.constants import DELIVERY_RETRY_DELAYS_SECONDS
 from src.core.exceptions import ForbiddenError, NotFoundError
 from src.domain.entities.delivery import DeliveryAttempt
 from src.domain.enums import DeliveryStatus
@@ -84,28 +83,7 @@ class DeliveryService:
         attempt.updated_at = datetime.now(UTC)
         return await self._deliveries.update(attempt)
 
-    async def schedule_retry(self, delivery_id: UUID, attempt_number: int) -> None:
-        current = await self._deliveries.get_by_id(delivery_id)
-        if current is None:
-            raise NotFoundError()
-
-        delay_s = DELIVERY_RETRY_DELAYS_SECONDS[
-            min(max(attempt_number - 1, 0), len(DELIVERY_RETRY_DELAYS_SECONDS) - 1)
-        ]
-        now = datetime.now(UTC)
-        retry_at = now + timedelta(seconds=delay_s)
-
-        next_attempt = DeliveryAttempt(
-            id=uuid4(),
-            created_at=now,
-            updated_at=now,
-            event_id=current.event_id,
-            endpoint_id=current.endpoint_id,
-            attempt_number=attempt_number,
-            status=DeliveryStatus.RETRYING,
-            response_code=None,
-            response_body=None,
-            error_message=None,
-            attempted_at=retry_at,
-        )
-        await self._deliveries.create(next_attempt)
+    async def schedule_retry(
+        self, delivery_id: UUID, attempt_number: int
+    ) -> DeliveryAttempt:
+        return await self._deliveries.schedule_retry(delivery_id, attempt_number)

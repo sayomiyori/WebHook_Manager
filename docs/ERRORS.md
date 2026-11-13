@@ -1,5 +1,28 @@
 # Error log
 
+## 2026-10-12: Admission loss, lost counters and unsafe replay
+
+Isolated PostgreSQL regressions reproduced a 202 response with zero delivery
+intents when background dispatch did not run, two simultaneous failures counting
+as one, and manual retry of active/successful rows. Admission now commits its
+fanout atomically with a source/key unique index. Failure updates serialize;
+configuration edits preserve counters. Manual retry locks the original and
+creates one successor; stale ambiguous claims require owned timestamp-matched
+operator resolution and retain audit metadata. Read/write/soft timeout outcomes
+remain unresolved rather than being blindly resent.
+
+Checked/pinned IP delivery rejects private/mixed DNS/metadata/translation targets,
+URL credentials and redirects; explicit numeric trusted local origins are opt-in.
+Platform mode rejects legacy routes/global metrics. Validation errors omit raw
+inputs. Real regression coverage is in `test_local_delivery_hardening.py` and
+`test_egress.py`; applied migrations are unchanged.
+
+A full-suite regression also exposed expired server-updated timestamp access after
+an endpoint commit (`MissingGreenlet`). Refresh/materialize inside the transaction
+before committing; the narrow repository/hardening set passed after correction.
+Final full-suite, built-image and independent review results are recorded in the
+verification report, not inferred from this error entry.
+
 ## 2026-10-09: Lost legacy broker publications and retries
 
 The dispatcher committed a pending delivery before publishing. Broker failure

@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
+from src.core.config import settings
+from src.core.egress import validate_destination
 from src.core.exceptions import ForbiddenError, NotFoundError
 from src.domain.entities.endpoint import Endpoint
 from src.domain.interfaces.repositories import EndpointRepository
@@ -15,6 +17,7 @@ class EndpointService:
     async def create_endpoint(
         self, owner_id: UUID, name: str, url: str, secret: str | None
     ) -> Endpoint:
+        validate_destination(url, settings.DELIVERY_TRUSTED_ORIGINS)
         now = datetime.now(UTC)
         endpoint = Endpoint(
             id=uuid4(),
@@ -55,6 +58,7 @@ class EndpointService:
         if "name" in fields:
             endpoint.name = str(fields["name"])
         if "url" in fields:
+            validate_destination(str(fields["url"]), settings.DELIVERY_TRUSTED_ORIGINS)
             endpoint.url = str(fields["url"])
         if "secret" in fields:
             secret_val = fields["secret"]
@@ -70,18 +74,7 @@ class EndpointService:
         await self._repo.delete(endpoint_id)
 
     async def increment_failure(self, endpoint_id: UUID) -> Endpoint:
-        endpoint = await self._repo.get_by_id(endpoint_id)
-        if endpoint is None:
-            raise NotFoundError()
-        endpoint.failure_count += 1
-        endpoint.updated_at = datetime.now(UTC)
-        return await self._repo.update(endpoint)
+        return await self._repo.update_failure_count(endpoint_id)
 
     async def reset_failure_count(self, endpoint_id: UUID) -> None:
-        endpoint = await self._repo.get_by_id(endpoint_id)
-        if endpoint is None:
-            raise NotFoundError()
-        endpoint.failure_count = 0
-        endpoint.updated_at = datetime.now(UTC)
-        await self._repo.update(endpoint)
-
+        await self._repo.update_failure_count(endpoint_id, reset=True)

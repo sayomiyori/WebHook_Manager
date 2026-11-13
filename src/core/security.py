@@ -58,6 +58,8 @@ def sanitize_webhook_headers(headers: dict[str, str]) -> dict[str, str]:
         "transfer-encoding",
         "upgrade",
         "x-webhook-signature",
+        "x-webhook-id",
+        "x-delivery-id",
     }
     # Connection can nominate additional hop-by-hop headers.
     for name, value in headers.items():

@@ -63,7 +63,7 @@ def worker_delivery(monkeypatch, request):
                 id=uuid4(),
                 owner_id=user.id,
                 name="receiver",
-                url="https://receiver.worker/hook",
+                url="https://93.184.216.34/hook",
                 secret="test-signing-only",
                 is_active=True,
                 failure_count=0,
@@ -122,7 +122,7 @@ def worker_delivery(monkeypatch, request):
 def test_worker_success_signature_and_repeat_is_noop(worker_delivery):
     factory, attempt_id, event_id, endpoint_id = worker_delivery
     with respx.mock as boundary:
-        request = boundary.post("https://receiver.worker/hook").mock(
+        request = boundary.post("https://93.184.216.34/hook").mock(
             return_value=Response(200, json={"ok": True})
         )
         result = task_module.deliver_webhook.apply(
@@ -155,7 +155,7 @@ def test_redis_reset_failure_does_not_repeat_success(worker_delivery, monkeypatc
     monkeypatch.setattr(task_module.SyncCircuitBreaker, "reset", unavailable)
     factory, attempt_id, event_id, endpoint_id = worker_delivery
     with respx.mock as boundary:
-        request = boundary.post("https://receiver.worker/hook").mock(
+        request = boundary.post("https://93.184.216.34/hook").mock(
             return_value=Response(200, json={"ok": True})
         )
         result = task_module.deliver_webhook.apply(
@@ -180,7 +180,7 @@ def test_late_soft_timeout_preserves_success(worker_delivery, monkeypatch):
     factory, attempt_id, event_id, endpoint_id = worker_delivery
     args = [str(attempt_id), str(event_id), str(endpoint_id)]
     with respx.mock as boundary:
-        request = boundary.post("https://receiver.worker/hook").mock(
+        request = boundary.post("https://93.184.216.34/hook").mock(
             return_value=Response(200)
         )
         with pytest.raises(SoftTimeLimitExceeded):
@@ -199,7 +199,7 @@ def test_late_soft_timeout_preserves_success(worker_delivery, monkeypatch):
 def test_worker_failures_exhaust_and_count_attempts(worker_delivery, failure):
     factory, attempt_id, event_id, endpoint_id = worker_delivery
     with respx.mock as boundary:
-        request = boundary.post("https://receiver.worker/hook")
+        request = boundary.post("https://93.184.216.34/hook")
         if isinstance(failure, int):
             request.mock(return_value=Response(failure))
         else:
@@ -254,7 +254,7 @@ def test_redis_outage_preserves_durable_delivery_state(
         retry = Mock(side_effect=AssertionError("Durable threshold must stop retry"))
         monkeypatch.setattr(task_module, "enqueue_delivery", retry)
     with respx.mock as boundary:
-        request = boundary.post("https://receiver.worker/hook").mock(
+        request = boundary.post("https://93.184.216.34/hook").mock(
             return_value=Response(response_code)
         )
         for _ in range(max(expected_calls, 1)):
@@ -316,9 +316,7 @@ def test_concurrent_delivery_during_http_is_noop(worker_delivery):
         return Response(200)
 
     with respx.mock as boundary, ThreadPoolExecutor(max_workers=2) as workers:
-        request = boundary.post("https://receiver.worker/hook").mock(
-            side_effect=receiver
-        )
+        request = boundary.post("https://93.184.216.34/hook").mock(side_effect=receiver)
         first = workers.submit(task_module.deliver_webhook.run, *args)
         try:
             assert entered.wait(5), "First delivery did not reach HTTP"
@@ -349,7 +347,7 @@ def test_concurrent_claim_serializes_before_http(worker_delivery, monkeypatch):
     monkeypatch.setattr(Session, "get", simultaneous_get)
     args = [str(attempt_id), str(event_id), str(endpoint_id)]
     with respx.mock as boundary, ThreadPoolExecutor(max_workers=2) as workers:
-        request = boundary.post("https://receiver.worker/hook").mock(
+        request = boundary.post("https://93.184.216.34/hook").mock(
             return_value=Response(200)
         )
         calls = [

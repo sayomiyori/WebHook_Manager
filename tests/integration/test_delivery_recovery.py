@@ -87,7 +87,7 @@ def test_retry_publication_failure_keeps_durable_retry(worker_delivery, monkeypa
     unavailable = Mock(side_effect=OperationalError("synthetic retry outage"))
     monkeypatch.setattr(task_module, "enqueue_delivery", unavailable)
     with respx.mock as boundary:
-        request = boundary.post("https://receiver.worker/hook").mock(
+        request = boundary.post("https://93.184.216.34/hook").mock(
             return_value=Response(500)
         )
         result = task_module.deliver_webhook.run(
@@ -119,7 +119,7 @@ def test_retry_outage_recovery_replay_and_early_notification(
     submitted = Mock(return_value="queued")
     monkeypatch.setattr(scanner, "enqueue_delivery", submitted)
     with respx.mock as boundary:
-        request = boundary.post("https://receiver.worker/hook").mock(
+        request = boundary.post("https://93.184.216.34/hook").mock(
             side_effect=[Response(500), Response(200)]
         )
         assert task_module.deliver_webhook.run(*args)["status"] == "failed"
@@ -240,7 +240,7 @@ async def test_manual_retry_persists_due_time_and_recovers(
 ):
     factory, delivery_id, event_id, endpoint_id = recovery_delivery
     with factory() as session:
-        session.get(DeliveryAttemptModel, delivery_id).status = DeliveryStatus.SUCCESS
+        session.get(DeliveryAttemptModel, delivery_id).status = DeliveryStatus.EXHAUSTED
         session.commit()
     async with async_session_maker() as session:
         repo = PostgresDeliveryAttemptRepository(session)
@@ -262,7 +262,7 @@ async def test_manual_retry_persists_due_time_and_recovers(
     monkeypatch.setattr(scanner, "enqueue_delivery", submitted)
     assert scanner.scan_once() == 0
     with respx.mock as boundary:
-        request = boundary.post("https://receiver.worker/hook").mock(
+        request = boundary.post("https://93.184.216.34/hook").mock(
             return_value=Response(200)
         )
         args = [str(retry_id), str(event_id), str(endpoint_id)]

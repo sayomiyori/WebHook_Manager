@@ -8,8 +8,9 @@ serializes claims for the same delivery; a task observing `delivering` returns
 without HTTP. The claim commits before HTTP, releasing the row lock. A worker
 lost after claiming leaves `delivering` visible and requires operator outcome
 reconciliation before any resend. This is not an exactly-once guarantee.
-Legacy arbitrary destinations
-still require an egress policy before exposing management to untrusted callers.
+Local hardening adds atomic admission, checked/pinned outbound destinations,
+serialized failure counters and explicit stale-claim resolution. See
+`specs/local-hardening.md`; final review/runtime rollout is tracked separately.
 The legacy circuit-breaker Redis client has 0.5-second socket/connect timeouts
 and no transport retries. On Redis errors, the existing PostgreSQL failure count
 still enforces the endpoint threshold and delivery outcomes remain persistent.
@@ -19,7 +20,7 @@ independent scanner below to recover broker outages and lost notifications.
 ## Legacy delivery recovery
 
 Stop old API/worker processes before upgrading; do not mix old workers with the
-new scanner. Apply `python -m alembic upgrade head` (revision `6e2f8a1c9b04`), then
+new scanner. Apply `python -m alembic upgrade head` (revision `8f3b1c6d2a90`), then
 start the API, existing Celery worker and a separately supervised scanner:
 
 ```bash
@@ -42,8 +43,11 @@ network deadline. Concurrent scanners are safe; avoid running unnecessary copies
 The worker persists the next HTTP attempt and due time before a best-effort
 countdown notification. HTTP backoff remains 10/30/120/600/3600 seconds, bounded
 by `MAX_DELIVERY_ATTEMPTS`. An early duplicate cannot skip the durable due time.
-The existing manual retry route persists a separate retrying row with its
-existing 5/15/60/300/900 schedule; the scanner now executes that intent when due.
+The manual retry route accepts only failed/exhausted rows and returns one durable
+successor per original row, preserving the 5/15/60/300/900 schedule. Concurrent
+retries return that same successor; the original is exhausted and cannot also be
+scanned. Active, pending or successful rows return 409. Repeated requests against
+an original row retain its successor; a further retry targets the failed successor.
 Broker failures and repeated scans consume no HTTP attempts. A Celery task may
 complete with a failed delivery result while its durable retry is still pending;
 read PostgreSQL delivery state rather than Celery retry metadata for outcomes.
@@ -51,11 +55,48 @@ read PostgreSQL delivery state rather than Celery retry metadata for outcomes.
 Monitor scanner warnings `delivery_broker_unavailable` and
 `delivery_recovery_unavailable`, overdue `next_dispatch_at`/`next_attempt_at`,
 and delivering records requiring reconciliation. Success, exhausted and
-delivering records are never scanned. Recovery only covers persisted delivery
-intents; a process lost before background dispatch creates them is a separate
-boundary. Arbitrary receivers remain at-least-once, without exactly-once effects.
+delivering records are never scanned. Accepted ingress now commits the event and
+its matching delivery intents together, so loss before background publication is
+recoverable. Concurrent idempotency keys select one event and one fanout. The
+forward migration stops on historical duplicate keys rather than deleting data.
+Arbitrary receivers do not gain exactly-once effects.
 The root local runtime is not upgraded by this source change; its schema/image
 and scanner must be rolled out together after a separate local rehearsal.
+
+## Outbound policy and ambiguous delivery resolution
+
+HTTP(S) endpoints reject credentials, fragments and unsafe literal IPs. Each
+attempt resolves all DNS answers and rejects any non-global address; the socket
+connects to the validated numeric IP while retaining the original Host and TLS
+SNI/certificate verification. Environment proxies and redirects are disabled.
+Private local receivers require exact numeric origins in
+`DELIVERY_TRUSTED_ORIGINS`, for example `["http://127.0.0.1:18081"]`. Hostname
+exceptions are not supported; link-local/metadata, multicast, reserved and IPv6
+translation/tunnel targets remain blocked. Old unsafe configured endpoints become
+exhausted without HTTP. DNS itself uses the operating-system resolver and its
+timeout; Celery task limits still bound the worker process.
+
+Confirmed HTTP failures and connection establishment failures retain bounded
+retry. Read/write/protocol errors, soft timeouts and unexpected transport failures
+remain `delivering` with an ambiguous outcome and are never automatically retried.
+Response previews are bounded. `X-Delivery-ID` identifies this delivery and
+`X-Webhook-ID` identifies the event; receiver-side deduplication is still required
+for external effects.
+
+Stop the affected worker before resolving an ambiguous claim, then inspect the
+receiver's audit records using these IDs. The owner sends
+`POST /api/v1/deliveries/{id}/resolve` with its API key and a body containing the
+exact recorded `attempted_at`, `outcome` (`delivered` or `not_delivered`) and a
+non-secret bounded `reference`. A claim younger than 60 seconds or mismatched
+timestamp returns 409; another owner is forbidden. Resolution records actor,
+time, decision and reference. Confirmed delivery becomes success; confirmed
+absence becomes exhausted. A separate explicit retry is required to resend.
+The worker checks the claim before saving a result and cannot overwrite resolution.
+
+Any enabled platform mode disables unscoped legacy management, legacy ingestion
+and aggregate metrics with 503. The separate platform bot/Telegram routes retain
+their AuthFortress/HMAC contracts. Standalone mode keeps legacy routes available.
+The image runs as UID10001 and installs runtime dependencies only.
 
 [![CI](https://github.com/sayomiyori/WebHook_Manager/actions/workflows/ci.yml/badge.svg)](https://github.com/sayomiyori/WebHook_Manager/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/sayomiyori/WebHook_Manager/branch/main/graph/badge.svg)](https://codecov.io/gh/sayomiyori/WebHook_Manager)

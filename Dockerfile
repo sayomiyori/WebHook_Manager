@@ -13,7 +13,10 @@ COPY alembic.ini /app/alembic.ini
 COPY alembic /app/alembic
 COPY scripts /app/scripts
 
-RUN pip install --no-cache-dir -e ".[dev]"
+RUN pip install --no-cache-dir . \
+    && useradd --create-home --uid 10001 appuser
+
+USER appuser
 
 EXPOSE 8000
 

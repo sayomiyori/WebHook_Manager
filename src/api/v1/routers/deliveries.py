@@ -8,9 +8,11 @@ from src.api.v1.dependencies.auth import get_current_owner, get_current_user
 from src.api.v1.schemas.deliveries import (
     DeliveryAttemptResponse,
     DeliveryDispatchRequest,
+    DeliveryResolutionRequest,
 )
 from src.api.v1.schemas.pagination import CursorPage
 from src.core.dependencies import (
+    get_delivery_attempt_repo,
     get_delivery_service,
     get_endpoint_service,
     get_event_service,
@@ -18,6 +20,9 @@ from src.core.dependencies import (
 )
 from src.domain.entities.user import User
 from src.domain.interfaces.repositories import SourceRepository
+from src.infrastructure.db.repositories.delivery_attempt_repository import (
+    PostgresDeliveryAttemptRepository,
+)
 from src.services.delivery_service import DeliveryService
 from src.services.endpoint_service import EndpointService
 from src.services.event_service import EventService
@@ -78,6 +83,18 @@ async def retry_delivery(
     if attempt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     await endpoints.get_endpoint(attempt.endpoint_id, current_user.id)
-    await service.schedule_retry(attempt_id, attempt.attempt_number + 1)
-    refreshed = await service.get_delivery(attempt_id)
-    return DeliveryAttemptResponse.model_validate(refreshed or attempt)
+    successor = await service.schedule_retry(attempt_id, attempt.attempt_number + 1)
+    return DeliveryAttemptResponse.model_validate(successor)
+
+
+@router.post("/{attempt_id}/resolve", response_model=DeliveryAttemptResponse)
+async def resolve_delivery(
+    attempt_id: UUID,
+    body: DeliveryResolutionRequest,
+    current_user: User = Depends(get_current_user),  # noqa: B008
+    repo: PostgresDeliveryAttemptRepository = Depends(get_delivery_attempt_repo),  # noqa: B008
+) -> DeliveryAttemptResponse:
+    resolved = await repo.resolve_claim(
+        attempt_id, current_user.id, body.attempted_at, body.outcome, body.reference
+    )
+    return DeliveryAttemptResponse.model_validate(resolved)

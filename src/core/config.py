@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     RATE_LIMIT_READ: int = 1000
     MAX_DELIVERY_ATTEMPTS: int = 5
     DELIVERY_TIMEOUT_SECONDS: int = 10
+    DELIVERY_TRUSTED_ORIGINS: list[str] = []
+
+    @field_validator("DELIVERY_TRUSTED_ORIGINS")
+    @classmethod
+    def _validate_delivery_origins(cls, value: list[str]) -> list[str]:
+        from src.core.egress import validate_trusted_origins
+
+        return validate_trusted_origins(value)
 
     PLATFORM_BOTS_ENABLED: bool = False
     AUTHFORTRESS_BASE_URL: str | None = None

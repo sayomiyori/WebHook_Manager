@@ -20,4 +20,8 @@ class DeliveryAttempt(BaseEntity):
     response_body: str | None
     error_message: str | None
     attempted_at: datetime
-
+    retried_from_id: UUID | None = None
+    resolved_by: UUID | None = None
+    resolved_at: datetime | None = None
+    resolution: str | None = None
+    resolution_reference: str | None = None

@@ -4,7 +4,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import sentry_sdk
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sentry_sdk.integrations.celery import CeleryIntegration
@@ -76,6 +77,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Webhook Manager", version="1.0.0", lifespan=lifespan)
 
 
+@app.exception_handler(RequestValidationError)
+async def handle_validation(_: Request, error: RequestValidationError) -> JSONResponse:
+    # Pydantic inputs can include passwords, signing secrets and credential URLs.
+    details = [
+        {"loc": item["loc"], "type": item["type"], "msg": item["msg"]}
+        for item in error.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": details})
+
+
 @app.exception_handler(PlatformError)
 async def handle_platform_error(_: Request, error: PlatformError) -> JSONResponse:
     content = {403: {"error": "forbidden"}, 404: {"error": "not_found"}}.get(
@@ -131,7 +142,19 @@ app.include_router(bot_internal_router)
 app.include_router(telegram_ingress_router)
 app.include_router(telegram_answers_router)
 
-v1 = APIRouter(prefix="/api/v1")
+
+def require_standalone() -> None:
+    if (
+        settings.PLATFORM_BOTS_ENABLED
+        or settings.PLATFORM_TELEGRAM_ENABLED
+        or settings.TELEGRAM_REPLIES_ENABLED
+    ):
+        raise HTTPException(
+            status_code=503, detail="Legacy API disabled in platform mode"
+        )
+
+
+v1 = APIRouter(prefix="/api/v1", dependencies=[Depends(require_standalone)])
 v1.include_router(auth_router)
 v1.include_router(deliveries_router)
 v1.include_router(endpoints_router)
@@ -139,6 +162,6 @@ v1.include_router(events_router)
 v1.include_router(subscriptions_router)
 app.include_router(v1)
 
-webhooks = APIRouter(prefix="/webhooks")
+webhooks = APIRouter(prefix="/webhooks", dependencies=[Depends(require_standalone)])
 webhooks.include_router(ingest_router)
 app.include_router(webhooks)

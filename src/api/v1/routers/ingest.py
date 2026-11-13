@@ -22,7 +22,7 @@ from src.core.dependencies import (
 from src.core.metrics import webhooks_received_total
 from src.core.security import sanitize_webhook_headers, verify_hmac_signature
 from src.domain.interfaces.repositories import SourceRepository
-from src.infrastructure.queue.dispatcher import dispatch_event_deliveries
+from src.infrastructure.queue.dispatcher import publish_event_deliveries
 from src.services.event_service import EventService
 
 log = structlog.get_logger()
@@ -34,17 +34,11 @@ MAX_BODY_BYTES = 1_048_576
 
 async def _dispatch_deliveries(
     *,
-    event_service: EventService,
     event_id_str: str,
 ) -> None:
-    # Re-fetch event so this background task is independent from request scope.
     from uuid import UUID
 
-    event = await event_service.get_event(UUID(event_id_str))
-    if event is None:
-        return
-    subs = await event_service.get_matching_subscriptions(event)
-    await dispatch_event_deliveries(event, subs)
+    await publish_event_deliveries(UUID(event_id_str))
 
 
 @router.post("/ingest/{source_slug}", status_code=status.HTTP_202_ACCEPTED)
@@ -101,29 +95,27 @@ async def ingest_webhook(
         headers,
         idempotency_key,
         event_type,
+        dispatch=True,
     )
 
     log.info(
         "ingest",
         source=source.slug,
         event_type=event.event_type,
-        idempotency_key=idempotency_key,
         duplicate=duplicate,
     )
     webhooks_received_total.labels(
-        source=source.slug,
-        event_type=event.event_type or "unknown",
+        source="legacy",
+        event_type="legacy",
     ).inc()
 
     if duplicate:
         response.status_code = status.HTTP_200_OK
         return {"status": "duplicate", "event_id": str(event.id)}
 
-    # Fire-and-forget: schedule downstream dispatch after response.
-    # NOTE: we intentionally avoid blocking the request path.
+    # Notification is optional: the scanner can publish already committed intents.
     background_tasks.add_task(
         _dispatch_deliveries,
-        event_service=event_service,
         event_id_str=str(event.id),
     )
     return {"status": "accepted", "event_id": str(event.id)}

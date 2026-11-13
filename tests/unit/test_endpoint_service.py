@@ -99,11 +99,10 @@ async def test_increment_failure_count() -> None:
         owner_id=uuid4(),
         secret=None,
         is_active=True,
-        failure_count=2,
+        failure_count=3,
     )
-    repo.get_by_id.return_value = endpoint
-    repo.update.return_value = endpoint
+    repo.update_failure_count.return_value = endpoint
     svc = EndpointService(repo)
     out = await svc.increment_failure(endpoint.id)
     assert out.failure_count == 3
-    repo.update.assert_awaited_once()
+    repo.update_failure_count.assert_awaited_once_with(endpoint.id)

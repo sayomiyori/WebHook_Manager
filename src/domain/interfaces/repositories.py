@@ -105,6 +105,9 @@ class EndpointRepository(ABC):
     @abstractmethod
     async def delete(self, id: UUID) -> None: ...
 
+    async def update_failure_count(self, id: UUID, *, reset: bool = False) -> Endpoint:
+        raise NotImplementedError
+
 
 class SubscriptionRepository(ABC):
     """Repository interface for subscriptions."""
@@ -162,6 +165,11 @@ class WebhookEventRepository(ABC):
     async def create(self, event: WebhookEvent) -> WebhookEvent: ...
 
     @abstractmethod
+    async def create_admission(
+        self, event: WebhookEvent, endpoint_ids: list[UUID]
+    ) -> tuple[WebhookEvent, bool]: ...
+
+    @abstractmethod
     async def update(self, event: WebhookEvent) -> WebhookEvent: ...
 
     @abstractmethod
@@ -188,7 +196,11 @@ class DeliveryAttemptRepository(ABC):
     @abstractmethod
     async def delete(self, id: UUID) -> None: ...
 
+    async def schedule_retry(
+        self, delivery_id: UUID, attempt_number: int
+    ) -> DeliveryAttempt:
+        raise NotImplementedError
+
 
 type EventRepository = WebhookEventRepository
 type DeliveryRepository = DeliveryAttemptRepository
-

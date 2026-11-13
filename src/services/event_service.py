@@ -4,7 +4,6 @@ import fnmatch
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from src.core.exceptions import ConflictError
 from src.domain.entities.subscription import Subscription
 from src.domain.entities.webhook_event import WebhookEvent
 from src.domain.interfaces.repositories import EventRepository, SubscriptionRepository
@@ -24,13 +23,14 @@ class EventService:
         headers: dict[str, str],
         idempotency_key: str | None,
         event_type: str | None,
+        *,
+        dispatch: bool = False,
     ) -> tuple[WebhookEvent, bool]:
         if idempotency_key:
             existing = await self._events.get_by_idempotency_key(
                 source_id, idempotency_key
             )
             if existing is not None:
-                _ = ConflictError  # referenced by spec; returning existing instead
                 return existing, True
 
         now = datetime.now(UTC)
@@ -45,8 +45,12 @@ class EventService:
             event_type=event_type,
             received_at=now,
         )
-        created = await self._events.create(event)
-        return created, False
+        endpoints = (
+            [sub.endpoint_id for sub in await self.get_matching_subscriptions(event)]
+            if dispatch
+            else []
+        )
+        return await self._events.create_admission(event, endpoints)
 
     async def get_event(self, event_id: UUID) -> WebhookEvent | None:
         return await self._events.get_by_id(event_id)

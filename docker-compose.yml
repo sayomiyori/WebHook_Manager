@@ -34,14 +34,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-webhook_manager}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-webhook_manager}
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
 
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "16379:6379"
 
 volumes:
   pg_data:

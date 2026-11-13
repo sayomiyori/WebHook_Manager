@@ -42,6 +42,12 @@ class WebhookEventModel(Base):
     )
 
     __table_args__ = (
+        Index(
+            "uq_webhook_events_source_idempotency",
+            source_id,
+            idempotency_key,
+            unique=True,
+            postgresql_where=idempotency_key.is_not(None) & (idempotency_key != ""),
+        ),
         Index("ix_webhook_events_created_at_desc", created_at.desc()),
     )
-

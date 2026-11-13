@@ -54,6 +54,9 @@ class FakeEventRepo(WebhookEventRepository):
             self._idem[(event.source_id, event.idempotency_key)] = event.id
         return event
 
+    async def create_admission(self, event, endpoint_ids):
+        return await self.create(event), False
+
     async def update(self, event: WebhookEvent) -> WebhookEvent:
         self._items[event.id] = event
         return event

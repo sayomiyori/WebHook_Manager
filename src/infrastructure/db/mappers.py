@@ -187,6 +187,11 @@ def delivery_attempt_to_entity(model: DeliveryAttemptModel) -> DeliveryAttempt:
         response_body=model.response_body,
         error_message=model.error_message,
         attempted_at=model.attempted_at,
+        retried_from_id=model.retried_from_id,
+        resolved_by=model.resolved_by,
+        resolved_at=model.resolved_at,
+        resolution=model.resolution,
+        resolution_reference=model.resolution_reference,
     )
 
 
@@ -203,5 +208,9 @@ def delivery_attempt_to_model(entity: DeliveryAttempt) -> DeliveryAttemptModel:
         response_body=entity.response_body,
         error_message=entity.error_message,
         attempted_at=entity.attempted_at,
+        retried_from_id=entity.retried_from_id,
+        resolved_by=entity.resolved_by,
+        resolved_at=entity.resolved_at,
+        resolution=entity.resolution,
+        resolution_reference=entity.resolution_reference,
     )
-
